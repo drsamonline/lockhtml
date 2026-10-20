@@ -63,6 +63,18 @@ const out = await page.evaluate(async () => {
   files["gui_recip_stream.html"] = VIEWER_TEMPLATE_ARGON2.replace("__PAYLOAD__", JSON.stringify(rstream.payload));
   const rb = new Uint8Array(await rstream.bin.arrayBuffer());
   files["gui_recip_stream.bin.b64"] = b64bytes(rb);
+
+  // Shamir shares mode
+  const sh = await makeSharedPayload(doc, { ...base, split: [5, 3], pin: null, kdf: "argon2id", keyfile: null });
+  files["gui_shares.html"] = VIEWER_TEMPLATE.replace("__PAYLOAD__", JSON.stringify(sh.payload));
+  files["gui_shares.txt"] = sh.shares.join("\n") + "\n";
+
+  const shs = await streamEncryptShared(doc, { ...base, split: [4, 2], pin: null, kdf: "argon2id",
+    keyfile: null, chunkSize: 65536, dataName: "gui_shares.bin" });
+  files["gui_shares_stream.html"] = VIEWER_TEMPLATE.replace("__PAYLOAD__", JSON.stringify(shs.payload));
+  files["gui_shares_stream.shares.txt"] = shs.shares.join("\n") + "\n";
+  const shb = new Uint8Array(await shs.bin.arrayBuffer());
+  files["gui_shares_stream.bin.b64"] = b64bytes(shb);
   return files;
 });
 

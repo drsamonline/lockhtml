@@ -21,6 +21,10 @@ We aim to acknowledge reports within a few days.
   fed to HKDF-SHA256 (info `lockhtml/x25519`), then AES-256-GCM. An optional PIN extends the HKDF
   input; a keyfile pepper is applied on top. No slow KDF is used, since the ECDH secret is already
   256 bits of entropy. See [docs/FORMAT.md](docs/FORMAT.md#recipient-mode-x25519).
+- **Shares mode**: the 32-byte key seed is split with Shamir's scheme over GF(256) (polynomial
+  `0x11b`); the key is `HKDF-SHA256(seed || pin, salt, info="lockhtml/shamir")` with an optional
+  keyfile pepper. Shares are distributed separately and never stored in the locked file. See
+  [docs/FORMAT.md](docs/FORMAT.md#shares-mode-shamir).
 - **Signing**: optional Ed25519 over the ciphertext (embedded) or over the MAC input (streaming);
   verified in-browser before display.
 - **Streaming container**: AES-256-GCM per 1 MiB chunk, nonce = `base_iv || uint32_be(index)`,
@@ -40,6 +44,9 @@ LockHTML is a **client-side** tool. Understanding its threat model matters:
   the raw source.
 - **The streaming container's MAC is keyed by the PIN-derived key**, so it protects integrity but
   not authenticity — only an Ed25519 signature proves who produced the file. Sign when that matters.
+- **Shares move the secret, not the trust.** *k-1* shares reveal nothing about the seed, but any *k*
+  holders can reconstruct it, and a reconstructed seed cannot be revoked — re-lock the file with a
+  fresh split if shares are exposed.
 - **Recipient mode moves the secret, not the trust.** Whoever holds the private key can open every
   file locked to it, and a leaked private key cannot be revoked. Rotate keys if one is exposed.
 - **View limits, expiry, watermarking and one-time view are best-effort.** Enforcement happens in

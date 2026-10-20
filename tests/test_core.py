@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import itertools
 import json
 import os
 import subprocess
@@ -18,9 +19,13 @@ from lockhtml.core import (
     FORMAT_VERSION,
     PBKDF2_PARAMS,
     STREAM_MAGIC,
+    _gf_inv,
+    _gf_mul,
     build_locked_html,
+    build_shared_html,
     decrypt,
     encrypt,
+    encrypt_shares,
     extract_payload,
     generate_recipient_key,
     generate_signing_key,
@@ -30,8 +35,11 @@ from lockhtml.core import (
     recipient_public_bytes,
     render_viewer,
     save_recipient_key,
+    shamir_combine,
+    shamir_split,
     stream_decrypt_file,
     stream_encrypt_bytes,
+    stream_encrypt_shares_file,
     try_decoy,
     unlock,
     verify_signature,
@@ -191,7 +199,7 @@ def test_extract_payload_invalid():
 
 
 def test_version():
-    assert __version__ == "1.3.0"
+    assert __version__ == "1.4.0"
 
 
 # --- CLI -------------------------------------------------------------------
@@ -508,6 +516,169 @@ def test_cli_requires_pin_or_recipient(tmp_path):
     src = tmp_path / "doc.html"
     src.write_text(DOC, encoding="utf-8")
     assert run_cli("lock", str(src), cwd=tmp_path).returncode == 2
+
+
+# --- Shamir secret sharing -----------------------------------------------
+
+def test_gf_arithmetic():
+    assert _gf_mul(0x57, 0x83) == 0xC1          # FIPS-197 AES example
+    assert all(_gf_mul(a, _gf_inv(a)) == 1 for a in range(1, 256))
+
+
+def test_shamir_round_trip():
+    secret = os.urandom(32)
+    shares = shamir_split(secret, 5, 3)
+    assert len(shares) == 5
+    assert all(len(s) == 33 for s in shares)
+    for combo in itertools.combinations(shares, 3):
+        assert shamir_combine(list(combo)) == secret
+
+
+def test_shamir_insufficient_shares():
+    secret = os.urandom(32)
+    shares = shamir_split(secret, 5, 3)
+    assert shamir_combine(shares[:2]) != secret
+
+
+def test_shamir_edges():
+    secret = os.urandom(16)
+    assert shamir_combine(shamir_split(secret, 3, 1)[:1]) == secret   # k = 1
+    assert shamir_combine(shamir_split(secret, 4, 4)) == secret       # k = n
+    with pytest.raises(ValueError):
+        shamir_split(secret, 2, 3)                                    # k > n
+
+
+def test_shamir_rejects_bad_shares():
+    shares = shamir_split(os.urandom(8), 3, 2)
+    with pytest.raises(ValueError):
+        shamir_combine([shares[0], shares[0]])                        # duplicate index
+    with pytest.raises(ValueError):
+        shamir_combine([bytes([0]) + shares[0][1:], shares[1]])       # index 0
+    with pytest.raises(ValueError):
+        shamir_combine([shares[0], shares[1][:-1]])                   # ragged
+
+
+def test_shares_mode_round_trip():
+    html, shares = build_shared_html(DOC, n=5, k=3)
+    payload = extract_payload(html)
+    assert payload["mode"] == "shares"
+    assert payload["kdf"] == "shamir-hkdf"
+    assert payload["kdfparams"] == {"info": "lockhtml/shamir", "n": 5, "k": 3}
+    assert "ORION-7742" not in html
+    assert unlock(html, shares=shares[:3]).decode() == DOC
+    assert unlock(html, shares=[shares[0], shares[2], shares[4]]).decode() == DOC
+
+
+def test_shares_insufficient_rejected():
+    html, shares = build_shared_html(DOC, n=5, k=3)
+    with pytest.raises(Exception):
+        unlock(html, shares=shares[:2])
+    with pytest.raises(Exception):
+        unlock(html)                       # no shares at all
+
+
+def test_shares_with_pin_and_keyfile():
+    kf = b"shares-keyfile"
+    html, shares = build_shared_html(DOC, "4821", n=3, k=2, keyfile=kf)
+    assert unlock(html, "4821", keyfile=kf, shares=shares[:2]).decode() == DOC
+    with pytest.raises(Exception):
+        unlock(html, "0000", keyfile=kf, shares=shares[:2])
+    with pytest.raises(Exception):
+        unlock(html, "4821", shares=shares[:2])          # missing keyfile
+
+
+def test_shares_decoy_not_allowed():
+    # encrypt_shares has no decoy parameter, so passing one is a TypeError
+    with pytest.raises(TypeError):
+        build_shared_html(DOC, n=3, k=2, decoy=("x", "y"))
+
+
+def test_shares_signed():
+    signer = generate_signing_key()
+    html, shares = build_shared_html(DOC, n=3, k=2, sign_key=signer)
+    assert verify_signature(extract_payload(html)) is True
+    assert unlock(html, shares=shares[:2]).decode() == DOC
+
+
+def test_shares_bad_split_rejected():
+    with pytest.raises(ValueError):
+        encrypt_shares(DOC, n=2, k=3)
+    with pytest.raises(ValueError):
+        encrypt_shares(DOC, n=0, k=0)
+
+
+def test_shares_stream_round_trip(tmp_path):
+    data = os.urandom(200_000)
+    src = tmp_path / "src.bin"
+    src.write_bytes(data)
+    sidecar = tmp_path / "d.bin"
+    payload, shares = stream_encrypt_shares_file(
+        str(src), None, str(sidecar), n=4, k=2, chunk_size=65536)
+    assert payload["mode"] == "shares"
+    assert stream_decrypt_file(str(sidecar), payload, shares=shares[:2]) == data
+    with pytest.raises(Exception):
+        stream_decrypt_file(str(sidecar), payload, shares=shares[:1])
+    with pytest.raises(Exception):
+        stream_decrypt_file(str(sidecar), payload)
+
+
+def test_shares_stream_metadata_tamper(tmp_path):
+    data = os.urandom(1000)
+    src = tmp_path / "s.bin"
+    src.write_bytes(data)
+    sidecar = tmp_path / "d.bin"
+    payload, shares = stream_encrypt_shares_file(str(src), None, str(sidecar), n=3, k=2)
+    payload["kdfparams"] = {"info": "lockhtml/shamir", "n": 9, "k": 2}
+    with pytest.raises(Exception):
+        stream_decrypt_file(str(sidecar), payload, shares=shares[:2])
+
+
+def test_cli_shares(tmp_path):
+    src = tmp_path / "doc.txt"
+    src.write_text("shared ORION-7742", encoding="utf-8")
+    r = run_cli("lock", str(src), "--shares", "5:3", cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    locked = tmp_path / "doc.locked.html"
+    shares = tmp_path / "doc.locked.shares.txt"
+    assert locked.is_file() and shares.is_file()
+    lines = [x for x in shares.read_text().splitlines() if x.strip()]
+    assert len(lines) == 5
+
+    # any 3 work
+    pick = tmp_path / "three.txt"
+    pick.write_text("\n".join([lines[0], lines[2], lines[4]]), encoding="utf-8")
+    out = tmp_path / "out.txt"
+    assert run_cli("unlock", str(locked), "--shares", str(pick), "-o", str(out),
+                   cwd=tmp_path).returncode == 0
+    assert out.read_text(encoding="utf-8") == "shared ORION-7742"
+
+    # --share repeatable
+    assert run_cli("unlock", str(locked), "--share", lines[1], "--share", lines[3],
+                   "--share", lines[0], "-o", str(out), cwd=tmp_path).returncode == 0
+
+    # only 2 fails
+    two = tmp_path / "two.txt"
+    two.write_text("\n".join(lines[:2]), encoding="utf-8")
+    assert run_cli("unlock", str(locked), "--shares", str(two), cwd=tmp_path).returncode == 1
+
+
+def test_cli_shares_bad_spec(tmp_path):
+    src = tmp_path / "d.txt"
+    src.write_text("x", encoding="utf-8")
+    assert run_cli("lock", str(src), "--shares", "3:5", cwd=tmp_path).returncode == 2
+    assert run_cli("lock", str(src), "--shares", "nonsense", cwd=tmp_path).returncode == 2
+
+
+def test_cli_shares_stream(tmp_path):
+    src = tmp_path / "big.bin"
+    src.write_bytes(os.urandom(150_000))
+    r = run_cli("lock", str(src), "--shares", "3:2", "--stream", "--chunk-size", "64", cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    out = tmp_path / "out.bin"
+    r = run_cli("unlock", str(tmp_path / "big.locked.html"), "--data", str(tmp_path / "big.locked.bin"),
+                "--shares", str(tmp_path / "big.locked.shares.txt"), "-o", str(out), cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert out.read_bytes() == src.read_bytes()
 
 
 def test_cli_stream(tmp_path):

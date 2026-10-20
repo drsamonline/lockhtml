@@ -183,6 +183,8 @@
         </div>
         <label class="fld" for="recipientPub" data-i18n="recipientPub">Recipient public key (X25519, base64) — lock to a person instead of a PIN</label>
         <input type="text" id="recipientPub" placeholder="optional — leave blank for PIN mode">
+        <label class="fld" for="splitKey" data-i18n="splitKey">Split the key (Shamir) — e.g. 5:3 means 5 shares, any 3 open it</label>
+        <input type="text" id="splitKey" placeholder="optional — leave blank for a single key">
         <label class="fld" for="decoyPin" data-i18n="decoyPin">Duress PIN (opens a harmless decoy page)</label>
         <input type="password" id="decoyPin" placeholder="optional">
       </div>
@@ -219,6 +221,11 @@
     <div class="kfrow" id="keyUnlockRow" style="display:none">
       <span class="state" style="color:var(--warn)" data-i18n="keyNeeded">This file needs your private key (.pem):</span>
       <input type="file" id="privkeyUnlock">
+    </div>
+    <div id="sharesUnlockRow" style="display:none">
+      <label class="fld" for="sharesUnlock" data-i18n="sharesNeeded">Key shares (one per line, or drop the .shares.txt):</label>
+      <textarea id="sharesUnlock" rows="3" placeholder="one share per line"></textarea>
+      <input type="file" id="sharesUnlockFile">
     </div>
 
     <div class="actions">
@@ -331,6 +338,67 @@ async function deriveAesKey(pin, salt, kdf, kdfparams, keyfile, usage) {
   return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, usage);
 }
 
+/* ---------- Shamir secret sharing over GF(256) (mirrors the Python core) ---------- */
+function gfMul(a, b) {
+  let p = 0;
+  for (let i = 0; i < 8; i++) {
+    if (b & 1) p ^= a;
+    const hi = a & 0x80;
+    a = (a << 1) & 0xFF;
+    if (hi) a ^= 0x1B;
+    b >>= 1;
+  }
+  return p & 0xFF;
+}
+function gfInv(a) {
+  let r = 1, base = a, e = 254;
+  while (e) { if (e & 1) r = gfMul(r, base); base = gfMul(base, base); e >>= 1; }
+  return r;
+}
+function gfEval(coeffs, x) {
+  let y = 0;
+  for (let i = coeffs.length - 1; i >= 0; i--) y = gfMul(y, x) ^ coeffs[i];
+  return y;
+}
+function shamirSplit(secret, n, k) {
+  const shares = [];
+  for (let x = 1; x <= n; x++) shares.push([x]);
+  for (let b = 0; b < secret.length; b++) {
+    const coeffs = [secret[b]];
+    const rnd = crypto.getRandomValues(new Uint8Array(k - 1));
+    for (let i = 0; i < k - 1; i++) coeffs.push(rnd[i]);
+    for (let x = 1; x <= n; x++) shares[x - 1].push(gfEval(coeffs, x));
+  }
+  return shares.map((s) => new Uint8Array(s));
+}
+function shamirCombine(shares) {
+  const len = shares[0].length - 1;
+  const xs = shares.map((s) => s[0]);
+  const out = new Uint8Array(len);
+  for (let j = 0; j < len; j++) {
+    let acc = 0;
+    for (let i = 0; i < shares.length; i++) {
+      let num = 1, den = 1;
+      for (let m = 0; m < shares.length; m++) {
+        if (m === i) continue;
+        num = gfMul(num, xs[m]);
+        den = gfMul(den, xs[i] ^ xs[m]);
+      }
+      acc ^= gfMul(shares[i][1 + j], gfMul(num, gfInv(den)));
+    }
+    out[j] = acc;
+  }
+  return out;
+}
+async function sharesKey(seed, pin, keyfile, salt) {
+  let ikm = seed;
+  if (pin) { const p = enc.encode(pin); const m = new Uint8Array(seed.length + p.length); m.set(seed, 0); m.set(p, seed.length); ikm = m; }
+  let key = await hkdf32(ikm, salt, "lockhtml/shamir");
+  if (keyfile && keyfile.length) key = await hmac256(key, keyfile);
+  return key;
+}
+let guiShares = null;
+
 /* ---------- X25519 recipient mode ---------- */
 let guiPriv = null;              // imported X25519 private key, for unlocking
 
@@ -373,6 +441,71 @@ async function makeBlob(data, pin, kdf, kdfparams, keyfile, usage) {
   const key = await deriveAesKey(pin, salt, kdf, kdfparams, keyfile, usage);
   const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data));
   return { salt: bytesToB64(salt), iv: bytesToB64(iv), ct: bytesToB64(ct), _ct: ct };
+}
+
+async function makeSharedPayload(bytes, opts) {
+  const [n, k] = opts.split;
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const seed = crypto.getRandomValues(new Uint8Array(32));
+  const raw = await sharesKey(seed, opts.pin || null, opts.keyfile, salt);
+  const aesKey = await crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt"]);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, aesKey, bytes));
+  const payload = { v: 2, kind: opts.kind, name: opts.name || null, mode: "shares",
+    kdf: "shamir-hkdf", kdfparams: { info: "lockhtml/shamir", n, k }, eph: null, pin: !!(opts.pin),
+    salt: bytesToB64(salt), iv: bytesToB64(iv), ct: bytesToB64(ct), id: hex(await sha256head(ct)),
+    onetime: !!(opts.oneTime || opts.maxViews === 1), maxviews: opts.maxViews || null,
+    notbefore: opts.notBefore || null, expires: opts.expires || null,
+    watermark: opts.watermark || null, keyfile: !!opts.keyfile, sig: null, decoy: null };
+  return { payload, shares: shamirSplit(seed, n, k).map(bytesToB64) };
+}
+async function streamEncryptShared(bytes, opts) {
+  const [n, k] = opts.split;
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const baseIv = crypto.getRandomValues(new Uint8Array(8));
+  const seed = crypto.getRandomValues(new Uint8Array(32));
+  const raw = await sharesKey(seed, opts.pin || null, opts.keyfile, salt);
+  const aesKey = await crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt"]);
+  const cs = opts.chunkSize, cnt = Math.max(1, Math.ceil(bytes.length / cs));
+  const payload = {
+    v: 2, container: "stream", kind: opts.kind, name: opts.name || null, mode: "shares",
+    kdf: "shamir-hkdf", kdfparams: { info: "lockhtml/shamir", n, k }, eph: null, pin: !!(opts.pin),
+    salt: bytesToB64(salt), baseiv: bytesToB64(baseIv), chunkSize: cs, chunkCount: cnt,
+    data: opts.dataName, onetime: !!(opts.oneTime || opts.maxViews === 1), maxviews: opts.maxViews || null,
+    notbefore: opts.notBefore || null, expires: opts.expires || null, watermark: opts.watermark || null,
+    keyfile: !!opts.keyfile, sig: null, decoy: null, metamac: null, id: null
+  };
+  const meta = enc.encode(metaString(payload));
+  const parts = [STREAM_MAGIC_BYTES], tags = [];
+  for (let i = 0; i < cnt; i++) {
+    const chunk = bytes.subarray(i * cs, Math.min((i + 1) * cs, bytes.length));
+    const nonce = new Uint8Array(12); nonce.set(baseIv, 0); new DataView(nonce.buffer).setUint32(8, i, false);
+    const aad = new Uint8Array(4); new DataView(aad.buffer).setUint32(0, i, false);
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: aad }, aesKey, chunk));
+    parts.push(ct); tags.push(ct.slice(ct.length - 16));
+  }
+  let total = 0; tags.forEach((t) => total += t.length);
+  const macInput = new Uint8Array(meta.length + total); macInput.set(meta, 0);
+  let o = meta.length; tags.forEach((t) => { macInput.set(t, o); o += t.length; });
+  const hk = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  payload.metamac = bytesToB64(new Uint8Array(await crypto.subtle.sign("HMAC", hk, macInput)));
+  payload.id = hex(new Uint8Array(await crypto.subtle.digest("SHA-256", macInput)).slice(0, 8));
+  return { payload, bin: new Blob(parts), shares: shamirSplit(seed, n, k).map(bytesToB64) };
+}
+async function readSharesGui() {
+  let lines = ($("sharesUnlock").value || "").split(/\s+/).filter(Boolean);
+  const inp = $("sharesUnlockFile");
+  if (inp && inp.files && inp.files[0]) {
+    lines = lines.concat((await inp.files[0].text()).split(/\s+/).filter(Boolean));
+  }
+  const seen = {}, out = [];
+  for (const l of lines) if (!seen[l]) { seen[l] = 1; out.push(l); }
+  return out;
+}
+async function sharesRawFromList(list, pin, keyfile, salt, k) {
+  const raw = list.slice(0, k).map(b64ToBytes);
+  const seed = shamirCombine(raw);
+  return sharesKey(seed, pin, keyfile, salt);
 }
 
 async function makePayload(bytes, opts) {
@@ -434,7 +567,8 @@ const STREAM_MAGIC_BYTES = new Uint8Array([0x4c, 0x4b, 0x48, 0x53, 0x31]); // "L
 function metaString(p) {
   const kp = p.kdfparams || {};
   const kps = ("m" in kp) ? (kp.m + "," + kp.t + "," + kp.p)
-          : (("info" in kp) ? String(kp.info) : String(kp.iter));
+          : (("n" in kp) ? (String(kp.info) + "," + kp.n + "," + kp.k)
+          : (("info" in kp) ? String(kp.info) : String(kp.iter)));
   const parts = ["v2", p.kdf, kps, String(p.chunkSize), String(p.chunkCount), String(p.kind),
           (p.name || ""), String(p.salt), String(p.baseiv),
           (p.maxviews == null ? "" : String(p.maxviews)),
@@ -492,7 +626,10 @@ async function streamDecrypt(dataFile, payload, pin, keyfile) {
   const kdfparams = payload.kdfparams || { iter: PBKDF2_ITER };
   const raw = payload.mode === "recipient"
     ? await recipientRawFromPrivate(payload.eph, pin, keyfile, b64ToBytes(payload.salt))
-    : await rawKey(pin, b64ToBytes(payload.salt), payload.kdf || "pbkdf2", kdfparams, keyfile);
+    : (payload.mode === "shares"
+        ? await sharesRawFromList(guiShares, payload.pin ? pin : null, keyfile,
+                                  b64ToBytes(payload.salt), payload.kdfparams.k)
+        : await rawKey(pin, b64ToBytes(payload.salt), payload.kdf || "pbkdf2", kdfparams, keyfile));
   const aesKey = await crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["decrypt"]);
   const head = new Uint8Array(await dataFile.slice(0, 5).arrayBuffer());
   if (!equalBytes(head, STREAM_MAGIC_BYTES)) throw new Error("not a LockHTML stream container");
@@ -605,11 +742,23 @@ $("keyfileInput").addEventListener("change", async () => {
 $("lockBtn").addEventListener("click", async () => {
   const pin = $("pinLock").value;
   const rpub = $("recipientPub").value.trim();
+  const splitRaw = $("splitKey").value.trim();
   if (lockFiles.length === 0) return;
-  if (!pin && !rpub) {
+  if (!pin && !rpub && !splitRaw) {
     $("statusLock").className = "status err";
-    $("statusLock").textContent = "Enter a PIN, or a recipient public key.";
+    $("statusLock").textContent = "Enter a PIN, a recipient public key, or a share split.";
     return;
+  }
+  let split = null;
+  if (splitRaw) {
+    const parts = splitRaw.replace(/\s|of/gi, ":").split(":").filter(Boolean);
+    const n = parseInt(parts[0], 10), k = parseInt(parts[1], 10);
+    if (!n || !k || k < 1 || n < k || n > 255) {
+      $("statusLock").className = "status err";
+      $("statusLock").textContent = "The share split must look like N:K with 1 <= K <= N <= 255.";
+      return;
+    }
+    split = [n, k];
   }
   if ($("useKeyfile").checked && !keyfileBytes) {
     $("statusLock").className = "status err";
@@ -623,7 +772,7 @@ $("lockBtn").addEventListener("click", async () => {
     if (recipientBytes.length !== 32) { $("statusLock").className = "status err"; $("statusLock").textContent = "An X25519 public key must be 32 bytes."; return; }
   }
   const opts = {
-    pin, recipient: recipientBytes,
+    pin, recipient: recipientBytes, split,
     kdf: $("kdf").value, keyfile: $("useKeyfile").checked ? keyfileBytes : null,
     oneTime: $("oneTime").checked, stream: $("streamMode").checked,
     maxViews: $("maxViews").value ? parseInt($("maxViews").value, 10) : null,
@@ -643,9 +792,25 @@ $("lockBtn").addEventListener("click", async () => {
       const o = { ...opts, kind: isHtml ? "html" : "file", name: isHtml ? null : f.name };
       const tpl = opts.kdf === "argon2id" ? VIEWER_TEMPLATE_ARGON2 : VIEWER_TEMPLATE;
       const outName = lockedName(f.name);
+      const dataName = outName.replace(/\.html$/, ".bin");
+      const sharesName = outName.replace(/\.html$/, ".shares.txt");
       let locked, label;
-      if (opts.stream) {
-        const dataName = outName.replace(/\.html$/, ".bin");
+      if (opts.split) {
+        if (opts.stream) {
+          const built = await streamEncryptShared(buf, { ...o, chunkSize: STREAM_CHUNK, dataName });
+          locked = tpl.replace("__PAYLOAD__", JSON.stringify(built.payload));
+          download(outName, locked);
+          download(dataName, built.bin, "application/octet-stream");
+          download(sharesName, built.shares.join("\n") + "\n", "text/plain");
+          label = `${outName} + ${dataName} + ${sharesName}`;
+        } else {
+          const built = await makeSharedPayload(buf, o);
+          locked = tpl.replace("__PAYLOAD__", JSON.stringify(built.payload));
+          download(outName, locked);
+          download(sharesName, built.shares.join("\n") + "\n", "text/plain");
+          label = `${outName} + ${sharesName}`;
+        }
+      } else if (opts.stream) {
         const built = await streamEncrypt(buf, { ...o, chunkSize: STREAM_CHUNK, dataName });
         locked = tpl.replace("__PAYLOAD__", JSON.stringify(built.payload));
         download(outName, locked);
@@ -700,6 +865,7 @@ $("unlockBtn").addEventListener("click", async () => {
     if (payload.keyfile) $("kfUnlockRow").style.display = "flex";
     if (payload.container === "stream") $("dataUnlockRow").style.display = "flex";
     if (payload.mode === "recipient") $("keyUnlockRow").style.display = "flex";
+    if (payload.mode === "shares") $("sharesUnlockRow").style.display = "block";
     let keyfile = null;
     if (payload.keyfile) {
       const kf = $("keyfileUnlock").files[0];
@@ -712,12 +878,27 @@ $("unlockBtn").addEventListener("click", async () => {
       try { guiPriv = await importPrivateKeyFile(pk); }
       catch (e) { $("statusUnlock").className = "status err"; $("statusUnlock").textContent = "That is not a valid X25519 private key."; return; }
     }
+    if (payload.mode === "shares") {
+      guiShares = await readSharesGui();
+      const need = (payload.kdfparams && payload.kdfparams.k) || 1;
+      if (guiShares.length < need) {
+        $("statusUnlock").className = "status err";
+        $("statusUnlock").textContent = `This file needs ${need} key shares (got ${guiShares.length}).`;
+        return;
+      }
+    }
     if (payload.container === "stream") {
       const df = $("dataUnlock").files[0];
       if (!df) { $("statusUnlock").className = "status err"; $("statusUnlock").textContent = "This file needs its data file (.bin)."; return; }
       unlockBuf = await streamDecrypt(df, payload, pin, keyfile);
     } else if (payload.mode === "recipient") {
       const raw = await recipientRawFromPrivate(payload.eph, payload.pin ? pin : null, keyfile, b64ToBytes(payload.salt));
+      const key = await crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["decrypt"]);
+      const buf = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64ToBytes(payload.iv) }, key, b64ToBytes(payload.ct));
+      unlockBuf = new Uint8Array(buf);
+    } else if (payload.mode === "shares") {
+      const raw = await sharesRawFromList(guiShares, payload.pin ? pin : null, keyfile,
+                                          b64ToBytes(payload.salt), payload.kdfparams.k);
       const key = await crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["decrypt"]);
       const buf = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64ToBytes(payload.iv) }, key, b64ToBytes(payload.ct));
       unlockBuf = new Uint8Array(buf);

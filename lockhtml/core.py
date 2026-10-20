@@ -47,7 +47,7 @@ import os
 import re
 from datetime import datetime, timezone
 from importlib import resources
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from argon2.low_level import Type as _Argon2Type
 from argon2.low_level import hash_secret_raw as _argon2_raw
@@ -266,6 +266,160 @@ def _recipient_key(shared: bytes, pin: Optional[str], keyfile: Optional[bytes],
     return key
 
 
+# --------------------------------------------------------------------------- #
+# Shamir secret sharing (split the key between several holders)
+# --------------------------------------------------------------------------- #
+# The 32-byte key seed is split into n shares with threshold k using Shamir's
+# scheme over GF(256). Any k shares reconstruct the seed; k-1 reveal nothing.
+# A share is encoded as base64(bytes([x]) + y), where x is the share index.
+
+SHAMIR_INFO = b"lockhtml/shamir"
+
+
+def _gf_mul(a: int, b: int) -> int:
+    p = 0
+    for _ in range(8):
+        if b & 1:
+            p ^= a
+        hi = a & 0x80
+        a = (a << 1) & 0xFF
+        if hi:
+            a ^= 0x1B
+        b >>= 1
+    return p
+
+
+def _gf_pow(a: int, e: int) -> int:
+    r = 1
+    while e:
+        if e & 1:
+            r = _gf_mul(r, a)
+        a = _gf_mul(a, a)
+        e >>= 1
+    return r
+
+
+def _gf_inv(a: int) -> int:
+    if a == 0:
+        raise ZeroDivisionError("no inverse for 0 in GF(256)")
+    return _gf_pow(a, 254)
+
+
+def shamir_split(secret: bytes, n: int, k: int, rng=None) -> List[bytes]:
+    """Split ``secret`` into ``n`` shares, any ``k`` of which reconstruct it."""
+    if not (1 <= k <= n <= 255):
+        raise ValueError("need 1 <= k <= n <= 255")
+    rng = rng or os.urandom
+    shares = [bytearray([x]) for x in range(1, n + 1)]
+    for byte in secret:
+        coeffs = [byte] + list(rng(k - 1))
+        for i, x in enumerate(range(1, n + 1)):
+            y = 0
+            for c in reversed(coeffs):
+                y = _gf_mul(y, x) ^ c
+            shares[i].append(y)
+    return [bytes(s) for s in shares]
+
+
+def shamir_combine(shares: List[bytes]) -> bytes:
+    """Reconstruct the secret from shares produced by :func:`shamir_split`."""
+    if not shares:
+        raise ValueError("no shares given")
+    length = len(shares[0]) - 1
+    if any(len(s) != length + 1 for s in shares):
+        raise ValueError("shares have inconsistent lengths")
+    xs = [s[0] for s in shares]
+    if 0 in xs:
+        raise ValueError("invalid share index 0")
+    if len(set(xs)) != len(xs):
+        raise ValueError("duplicate share index")
+    secret = bytearray(length)
+    for j in range(length):
+        acc = 0
+        for i, si in enumerate(shares):
+            num = den = 1
+            for m, sm in enumerate(shares):
+                if m == i:
+                    continue
+                num = _gf_mul(num, xs[m])
+                den = _gf_mul(den, xs[i] ^ xs[m])
+            acc ^= _gf_mul(si[1 + j], _gf_mul(num, _gf_inv(den)))
+        secret[j] = acc
+    return bytes(secret)
+
+
+def _shares_key(seed: bytes, pin: Optional[str], keyfile: Optional[bytes], salt: bytes) -> bytes:
+    ikm = seed + (pin.encode("utf-8") if pin else b"")
+    key = HKDF(algorithm=hashes.SHA256(), length=32, salt=salt, info=SHAMIR_INFO).derive(ikm)
+    if keyfile:
+        key = hmac.new(key, keyfile, hashlib.sha256).digest()
+    return key
+
+
+def encrypt_shares(
+    data: Source,
+    pin: Optional[str] = None,
+    *,
+    n: int,
+    k: int,
+    keyfile: Optional[bytes] = None,
+    one_time: bool = False,
+    max_views: Optional[int] = None,
+    not_before: Optional[Union[str, datetime]] = None,
+    expires: Optional[Union[str, datetime]] = None,
+    watermark: Optional[str] = None,
+    kind: str = "html",
+    name: Optional[str] = None,
+    sign_key: Optional[Ed25519PrivateKey] = None,
+) -> Tuple[Dict[str, Any], List[str]]:
+    """Encrypt ``data`` and split its key; returns ``(payload, share_strings)``."""
+    if not (1 <= k <= n <= 255):
+        raise ValueError("need 1 <= k <= n <= 255")
+    seed = os.urandom(32)
+    salt, iv = os.urandom(16), os.urandom(12)
+    key = _shares_key(seed, pin, keyfile, salt)
+    ct = AESGCM(key).encrypt(iv, _as_bytes(data), None)
+
+    if one_time and max_views is None:
+        max_views = 1
+
+    payload: Dict[str, Any] = {
+        "v": FORMAT_VERSION,
+        "kind": kind,
+        "name": name,
+        "mode": "shares",
+        "kdf": "shamir-hkdf",
+        "kdfparams": {"info": SHAMIR_INFO.decode("ascii"), "n": n, "k": k},
+        "eph": None,
+        "pin": bool(pin),
+        "salt": _b64(salt),
+        "iv": _b64(iv),
+        "ct": _b64(ct),
+        "id": hashlib.sha256(ct).hexdigest()[:16],
+        "onetime": bool(one_time or max_views == 1),
+        "maxviews": max_views,
+        "notbefore": _iso(not_before),
+        "expires": _iso(expires),
+        "watermark": watermark,
+        "keyfile": bool(keyfile),
+        "sig": _sign_ciphertext(sign_key, ct) if sign_key else None,
+        "decoy": None,
+    }
+    return payload, [_b64(s) for s in shamir_split(seed, n, k)]
+
+
+def build_shared_html(source: Source, pin: Optional[str] = None, *, n: int, k: int,
+                      template: Optional[str] = None, **kwargs: Any
+                      ) -> Tuple[str, List[str]]:
+    """Like :func:`build_locked_html`, but returns the share strings too."""
+    payload, shares = encrypt_shares(source, pin, n=n, k=k, **kwargs)
+    tpl = template if template is not None else load_template(payload["kdf"])
+    if PAYLOAD_PLACEHOLDER not in tpl:
+        raise ValueError("viewer template is missing the __PAYLOAD__ placeholder")
+    html = tpl.replace(PAYLOAD_PLACEHOLDER, json.dumps(payload, separators=(",", ":")))
+    return html, shares
+
+
 def _encrypt_blob(
     data: bytes,
     pin: str,
@@ -361,14 +515,26 @@ def encrypt(
 
 
 def _decrypt_blob(blob: Dict[str, Any], pin: Optional[str], keyfile: Optional[bytes],
-                  private_key: Optional[X25519PrivateKey] = None) -> bytes:
-    if blob.get("mode") == "recipient":
+                  private_key: Optional[X25519PrivateKey] = None,
+                  shares: Optional[List[str]] = None) -> bytes:
+    mode = blob.get("mode")
+    if mode == "recipient":
         if private_key is None:
             raise ValueError("this file needs its X25519 private key")
         shared = private_key.exchange(
             X25519PublicKey.from_public_bytes(_unb64(blob["eph"])))
         key = _recipient_key(shared, pin if blob.get("pin") else None, keyfile,
                              _unb64(blob["salt"]))
+    elif mode == "shares":
+        if not shares:
+            raise ValueError("this file needs its key shares")
+        k = int((blob.get("kdfparams") or {}).get("k") or len(shares))
+        raw = [_unb64(s) for s in shares]
+        if len(raw) < k:
+            raise ValueError("not enough shares")
+        seed = shamir_combine(raw[:k])
+        key = _shares_key(seed, pin if blob.get("pin") else None, keyfile,
+                          _unb64(blob["salt"]))
     else:
         if pin is None:
             raise ValueError("a PIN is required")
@@ -382,9 +548,10 @@ def _decrypt_blob(blob: Dict[str, Any], pin: Optional[str], keyfile: Optional[by
 
 def decrypt(payload: Dict[str, Any], pin: Optional[str] = None,
             keyfile: Optional[bytes] = None,
-            private_key: Optional[X25519PrivateKey] = None) -> bytes:
-    """Decrypt a payload with a PIN, or with an X25519 private key."""
-    return _decrypt_blob(payload, pin, keyfile, private_key)
+            private_key: Optional[X25519PrivateKey] = None,
+            shares: Optional[List[str]] = None) -> bytes:
+    """Decrypt a payload with a PIN, an X25519 private key, or key shares."""
+    return _decrypt_blob(payload, pin, keyfile, private_key, shares)
 
 
 def try_decoy(payload: Dict[str, Any], pin: str, keyfile: Optional[bytes] = None):
@@ -435,9 +602,10 @@ def extract_payload(locked_html: str) -> Dict[str, Any]:
 
 def unlock(locked_html: str, pin: Optional[str] = None,
            keyfile: Optional[bytes] = None,
-           private_key: Optional[X25519PrivateKey] = None) -> bytes:
+           private_key: Optional[X25519PrivateKey] = None,
+           shares: Optional[List[str]] = None) -> bytes:
     """Decrypt a locked HTML document back to its original plaintext bytes."""
-    return decrypt(extract_payload(locked_html), pin, keyfile, private_key)
+    return decrypt(extract_payload(locked_html), pin, keyfile, private_key, shares)
 
 
 # --------------------------------------------------------------------------- #
@@ -474,6 +642,8 @@ DEFAULT_CHUNK_SIZE = 1 << 20
 def _kdfparams_str(kdfparams: Dict[str, Any]) -> str:
     if "m" in kdfparams:
         return f"{kdfparams['m']},{kdfparams.get('t')},{kdfparams.get('p')}"
+    if "n" in kdfparams:  # shamir shares mode
+        return f"{kdfparams.get('info')},{kdfparams['n']},{kdfparams['k']}"
     if "info" in kdfparams:  # x25519 recipient mode
         return str(kdfparams["info"])
     return str(kdfparams.get("iter"))
@@ -509,48 +679,28 @@ def _chunk_aad(index: int) -> bytes:
     return index.to_bytes(4, "big")
 
 
-def stream_encrypt_file(
+def _stream_write(
     src_path: str,
-    pin: Optional[str] = None,
-    data_path: str = "",
+    data_path: str,
+    key: bytes,
+    salt: bytes,
+    base_iv: bytes,
+    mode_fields: Dict[str, Any],
     *,
-    recipient: Optional[bytes] = None,
-    kdf: str = DEFAULT_KDF,
-    kdfparams: Optional[Dict[str, Any]] = None,
-    keyfile: Optional[bytes] = None,
-    chunk_size: int = DEFAULT_CHUNK_SIZE,
-    one_time: bool = False,
-    max_views: Optional[int] = None,
-    not_before: Optional[Union[str, datetime]] = None,
-    expires: Optional[Union[str, datetime]] = None,
-    watermark: Optional[str] = None,
-    kind: str = "file",
-    name: Optional[str] = None,
-    sign_key: Optional[Ed25519PrivateKey] = None,
+    chunk_size: int,
+    one_time: bool,
+    max_views: Optional[int],
+    not_before: Optional[Union[str, datetime]],
+    expires: Optional[Union[str, datetime]],
+    watermark: Optional[str],
+    kind: str,
+    name: Optional[str],
+    sign_key: Optional[Ed25519PrivateKey],
+    keyfile: bool,
 ) -> Dict[str, Any]:
-    """Encrypt a file into a streaming sidecar; returns the payload for the viewer."""
+    """Chunk-encrypt ``src_path`` into ``data_path`` and return the viewer payload."""
     if one_time and max_views is None:
         max_views = 1
-
-    salt = os.urandom(16)
-    base_iv = os.urandom(8)
-    if recipient is not None:
-        eph = X25519PrivateKey.generate()
-        shared = eph.exchange(X25519PublicKey.from_public_bytes(recipient))
-        key = _recipient_key(shared, pin, keyfile, salt)
-        mode_fields: Dict[str, Any] = {
-            "mode": "recipient", "kdf": "x25519-hkdf",
-            "kdfparams": {"info": HKDF_INFO.decode("ascii")},
-            "eph": _b64(recipient_public_bytes(eph)), "pin": bool(pin),
-        }
-    else:
-        if pin is None:
-            raise ValueError("a PIN or a recipient public key is required")
-        if kdfparams is None:
-            kdfparams = ARGON2_PARAMS if kdf == "argon2id" else PBKDF2_PARAMS
-        key = derive_key(pin, salt, kdf, kdfparams, keyfile)
-        mode_fields = {"mode": "pin", "kdf": kdf, "kdfparams": dict(kdfparams),
-                       "eph": None, "pin": True}
     aes = AESGCM(key)
 
     total = os.path.getsize(src_path)
@@ -608,6 +758,90 @@ def stream_encrypt_file(
     return payload
 
 
+def stream_encrypt_file(
+    src_path: str,
+    pin: Optional[str] = None,
+    data_path: str = "",
+    *,
+    recipient: Optional[bytes] = None,
+    kdf: str = DEFAULT_KDF,
+    kdfparams: Optional[Dict[str, Any]] = None,
+    keyfile: Optional[bytes] = None,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    one_time: bool = False,
+    max_views: Optional[int] = None,
+    not_before: Optional[Union[str, datetime]] = None,
+    expires: Optional[Union[str, datetime]] = None,
+    watermark: Optional[str] = None,
+    kind: str = "file",
+    name: Optional[str] = None,
+    sign_key: Optional[Ed25519PrivateKey] = None,
+) -> Dict[str, Any]:
+    """Encrypt a file into a streaming sidecar; returns the payload for the viewer."""
+    salt = os.urandom(16)
+    base_iv = os.urandom(8)
+    if recipient is not None:
+        eph = X25519PrivateKey.generate()
+        shared = eph.exchange(X25519PublicKey.from_public_bytes(recipient))
+        key = _recipient_key(shared, pin, keyfile, salt)
+        mode_fields: Dict[str, Any] = {
+            "mode": "recipient", "kdf": "x25519-hkdf",
+            "kdfparams": {"info": HKDF_INFO.decode("ascii")},
+            "eph": _b64(recipient_public_bytes(eph)), "pin": bool(pin),
+        }
+    else:
+        if pin is None:
+            raise ValueError("a PIN or a recipient public key is required")
+        if kdfparams is None:
+            kdfparams = ARGON2_PARAMS if kdf == "argon2id" else PBKDF2_PARAMS
+        key = derive_key(pin, salt, kdf, kdfparams, keyfile)
+        mode_fields = {"mode": "pin", "kdf": kdf, "kdfparams": dict(kdfparams),
+                       "eph": None, "pin": True}
+    return _stream_write(
+        src_path, data_path, key, salt, base_iv, mode_fields,
+        chunk_size=chunk_size, one_time=one_time, max_views=max_views,
+        not_before=not_before, expires=expires, watermark=watermark,
+        kind=kind, name=name, sign_key=sign_key, keyfile=bool(keyfile))
+
+
+def stream_encrypt_shares_file(
+    src_path: str,
+    pin: Optional[str] = None,
+    data_path: str = "",
+    *,
+    n: int,
+    k: int,
+    keyfile: Optional[bytes] = None,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    one_time: bool = False,
+    max_views: Optional[int] = None,
+    not_before: Optional[Union[str, datetime]] = None,
+    expires: Optional[Union[str, datetime]] = None,
+    watermark: Optional[str] = None,
+    kind: str = "file",
+    name: Optional[str] = None,
+    sign_key: Optional[Ed25519PrivateKey] = None,
+) -> Tuple[Dict[str, Any], List[str]]:
+    """Streaming container whose key is split into ``n`` shares (any ``k`` open it)."""
+    if not (1 <= k <= n <= 255):
+        raise ValueError("need 1 <= k <= n <= 255")
+    salt = os.urandom(16)
+    base_iv = os.urandom(8)
+    seed = os.urandom(32)
+    key = _shares_key(seed, pin, keyfile, salt)
+    mode_fields: Dict[str, Any] = {
+        "mode": "shares", "kdf": "shamir-hkdf",
+        "kdfparams": {"info": SHAMIR_INFO.decode("ascii"), "n": n, "k": k},
+        "eph": None, "pin": bool(pin),
+    }
+    payload = _stream_write(
+        src_path, data_path, key, salt, base_iv, mode_fields,
+        chunk_size=chunk_size, one_time=one_time, max_views=max_views,
+        not_before=not_before, expires=expires, watermark=watermark,
+        kind=kind, name=name, sign_key=sign_key, keyfile=bool(keyfile))
+    return payload, [_b64(s) for s in shamir_split(seed, n, k)]
+
+
 def stream_decrypt_file(
     data_path: str,
     payload: Dict[str, Any],
@@ -615,15 +849,27 @@ def stream_decrypt_file(
     out_path: Optional[str] = None,
     keyfile: Optional[bytes] = None,
     private_key: Optional[X25519PrivateKey] = None,
+    shares: Optional[List[str]] = None,
 ) -> Optional[bytes]:
     """Verify and decrypt a streaming sidecar. Returns bytes if out_path is None."""
-    if payload.get("mode") == "recipient":
+    mode = payload.get("mode")
+    if mode == "recipient":
         if private_key is None:
             raise ValueError("this file needs its X25519 private key")
         shared = private_key.exchange(
             X25519PublicKey.from_public_bytes(_unb64(payload["eph"])))
         key = _recipient_key(shared, pin if payload.get("pin") else None, keyfile,
                              _unb64(payload["salt"]))
+    elif mode == "shares":
+        if not shares:
+            raise ValueError("this file needs its key shares")
+        k = int((payload.get("kdfparams") or {}).get("k") or len(shares))
+        raw = [_unb64(s) for s in shares]
+        if len(raw) < k:
+            raise ValueError("not enough shares")
+        seed = shamir_combine(raw[:k])
+        key = _shares_key(seed, pin if payload.get("pin") else None, keyfile,
+                          _unb64(payload["salt"]))
     else:
         if pin is None:
             raise ValueError("a PIN is required")

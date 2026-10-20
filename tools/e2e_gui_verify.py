@@ -54,6 +54,27 @@ def main() -> int:
     got = stream_decrypt_file(rside, rsp, private_key=priv).decode()
     checks.append(("gui_recip_stream.html", MARK in got and rsp["mode"] == "recipient"))
 
+    # Shamir shares files, locked by the browser, opened with the Python core
+    sh_lines = [x for x in open(j("gui_shares.txt")).read().splitlines() if x.strip()]
+    stext = open(j("gui_shares.html")).read()
+    spayload = extract_payload(stext)
+    got = unlock(stext, shares=sh_lines[:3]).decode()
+    checks.append(("gui_shares.html", MARK in got and spayload["mode"] == "shares"))
+    try:
+        unlock(stext, shares=sh_lines[:2])
+        checks.append(("gui_shares.html (2 of 3 rejected)", False))
+    except Exception:
+        checks.append(("gui_shares.html (2 of 3 rejected)", True))
+
+    shtml = open(j("gui_shares_stream.html")).read()
+    ssp = extract_payload(shtml)
+    sside = j("gui_shares_stream.bin")
+    with open(sside, "wb") as fh:
+        fh.write(base64.b64decode(open(j("gui_shares_stream.bin.b64")).read()))
+    ssl = [x for x in open(j("gui_shares_stream.shares.txt")).read().splitlines() if x.strip()]
+    got = stream_decrypt_file(sside, ssp, shares=ssl[:2]).decode()
+    checks.append(("gui_shares_stream.html", MARK in got and ssp["mode"] == "shares"))
+
     for name, ok in checks:
         print(f"{'PASS' if ok else 'FAIL'} {name}")
     failed = sum(1 for _, ok in checks if not ok)

@@ -14,6 +14,7 @@ import base64  # noqa: E402
 
 from lockhtml.core import (  # noqa: E402
     build_locked_html,
+    build_shared_html,
     generate_recipient_key,
     generate_signing_key,
     recipient_public_bytes,
@@ -21,6 +22,7 @@ from lockhtml.core import (  # noqa: E402
     save_recipient_key,
     save_signing_key,
     stream_encrypt_file,
+    stream_encrypt_shares_file,
 )
 
 DOC = "<!DOCTYPE html><html><body><h1>Secret</h1><p>ORION-7742</p></body></html>"
@@ -91,6 +93,25 @@ def main() -> int:
     save_recipient_key(other, p("other.pem"))
 
     open(p("rec.pub"), "w").write(base64.b64encode(rpub).decode() + "\n")
+
+    # ---- Shamir shares mode ----
+    sh_html, sh = build_shared_html(DOC, n=5, k=3)
+    open(p("sh_embedded.html"), "w").write(sh_html)
+    open(p("sh_embedded.shares.txt"), "w").write("\n".join(sh) + "\n")
+    open(p("sh_two.txt"), "w").write("\n".join(sh[:2]) + "\n")
+
+    sh_html2, sh2 = build_shared_html(DOC, PIN, n=3, k=2)
+    open(p("sh_pin.html"), "w").write(sh_html2)
+    open(p("sh_pin.shares.txt"), "w").write("\n".join(sh2) + "\n")
+
+    ssrc = p("sh_stream.src")
+    with open(ssrc, "wb") as fh:
+        fh.write(os.urandom(300_000))
+    sp, sh3 = stream_encrypt_shares_file(ssrc, None, p("sh_stream.bin"),
+                                         n=4, k=2, kind="file", name="sb.bin", chunk_size=65536)
+    open(p("sh_stream.html"), "w").write(render_viewer(sp))
+    open(p("sh_stream.shares.txt"), "w").write("\n".join(sh3) + "\n")
+
     print(f"wrote fixtures to {out}")
     return 0
 

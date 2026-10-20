@@ -35,6 +35,7 @@ put on a USB stick — and the GUI works **offline** once loaded.
 
 - 🔐 **Argon2id** (memory-hard) by default, with **PBKDF2-SHA256** as a lighter alternative.
 - 🔑 **Recipient mode (X25519)** — lock a file to someone's *public key* so only they can open it, with no shared secret; add a PIN on top if you want two factors.
+- 🧩 **Shamir secret sharing** — split the key into *n* shares so any *k* holders (and no fewer) can open it. Give five people a share; any three can open it.
 - 🧂 **Keyfile support** — optionally require a second file in addition to the PIN.
 - ✍️ **Ed25519 signing** — sign a locked file so recipients can verify it came from you and wasn't altered.
 - 🎭 **Duress PIN** — a second PIN that opens a harmless decoy document instead.
@@ -85,6 +86,10 @@ lockhtml unlock report.locked.html --key alice.pem
 
 # Add a duress PIN that opens a decoy page
 lockhtml lock report.html --pin 4821 --decoy-pin 0000
+
+# Split the key: 5 shares, any 3 open it
+lockhtml lock report.html --shares 5:3
+lockhtml unlock report.locked.html --shares report.locked.shares.txt
 
 # Large file: streaming container (viewer + sidecar .bin, constant memory)
 lockhtml lock holiday.mp4 --pin 4821 --stream
@@ -157,6 +162,20 @@ lockhtml keygen --type x25519 -o alice.pem   # private (keep) + alice.pub (hand 
 lockhtml lock big.mp4 --to alice.pub --stream
 ```
 
+### 🧩 Shamir secret sharing
+
+Split a file's key so that any *k* of *n* holders can open it and no fewer can. A random 32-byte seed
+is split with Shamir's scheme over **GF(256)**; the seed feeds HKDF-SHA256 to produce the AES key.
+The shares are written to a `.shares.txt` file that you distribute **separately** — the locked file
+alone cannot be opened. It works in the streaming container and can be combined with a PIN and a
+keyfile.
+
+```bash
+lockhtml lock report.html --shares 5:3      # writes report.locked.html + report.locked.shares.txt
+lockhtml unlock report.locked.html --shares some-three.txt
+lockhtml unlock report.locked.html --share <b64> --share <b64> --share <b64>
+```
+
 ### 📦 Containers and size limits
 
 The default **embedded** container puts the ciphertext inside the HTML as base64. That is the most
@@ -199,6 +218,7 @@ after the first fetch.
 | --- | --- |
 | Content unreadable without PIN | ✅ Strong (AES-256-GCM + Argon2id) |
 | Content unreadable without the private key | ✅ Strong (X25519 + HKDF) |
+| Content unreadable with fewer than k shares | ✅ Strong (Shamir over GF(256)) |
 | Wrong PIN rejected | ✅ Strong (authenticated encryption) |
 | Keyfile required as a second factor | ✅ Strong (pepper) |
 | Authenticity (sender identity) | ✅ Strong when signed (Ed25519) |

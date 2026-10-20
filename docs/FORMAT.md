@@ -13,8 +13,8 @@ This document specifies format **v2** (LockHTML ≥ 1.1). v1 files remain readab
   "v":         2,
   "kind":      "html" | "file",     // how the viewer should present the plaintext
   "name":      "report.pdf" | null, // original filename (kind == "file")
-  "mode":      "pin" | "recipient", // see "Recipient mode" below
-  "kdf":       "argon2id" | "pbkdf2" | "x25519-hkdf",
+  "mode":      "pin" | "recipient" | "shares",  // see below
+  "kdf":       "argon2id" | "pbkdf2" | "x25519-hkdf" | "shamir-hkdf",
   "kdfparams": { "m": 19456, "t": 2, "p": 1 }   // argon2id  (m in KiB)
                | { "iter": 250000 },            // pbkdf2
   "salt":      "<base64>",          // 16 random bytes
@@ -92,6 +92,53 @@ safely. Because the shared secret is already 256 bits of entropy, no slow KDF is
 the optional PIN simply extends the HKDF input. `decoy` is not available in recipient mode.
 
 Private keys are PKCS#8 PEM; public keys are the 32-byte raw value, base64.
+
+## Shares mode (Shamir)
+
+The key can be split between several holders, so that any *k* of *n* of them (and no fewer) can open
+the file. The payload carries only the parameters — never the shares themselves:
+
+```jsonc
+  "mode":      "shares",
+  "kdf":       "shamir-hkdf",
+  "kdfparams": { "info": "lockhtml/shamir", "n": 5, "k": 3 },
+  "pin":       true | false,   // whether a PIN is *also* required
+  "salt":      "<base64>"      // HKDF salt, 16 random bytes
+```
+
+A random 32-byte **seed** is generated per file and split with Shamir's scheme over **GF(256)**
+(primitive polynomial `0x11b`):
+
+```
+key = HKDF-SHA256(seed || utf8(pin), salt, info="lockhtml/shamir", 32)
+key = HMAC-SHA256(key, keyfile)      # only when a keyfile is required
+```
+
+### Share encoding
+
+A share is `base64(bytes([x]) + y)` where `x` is the share index (1..n) and `y` is the share value
+(one byte per seed byte, so 33 bytes for a 32-byte seed). A `.shares.txt` file holds one share per
+line. Shares are distributed **separately** from the locked file; the file alone cannot be opened.
+
+### Reconstruction
+
+Given at least `k` shares, the seed is recovered by Lagrange interpolation at `x = 0`:
+
+```
+L_i(0) = prod_{m != i} x_m / (x_i - x_m)      # all arithmetic in GF(256)
+seed   = XOR_i  y_i * L_i(0)
+```
+
+Readers must reject duplicate indices, index 0, and ragged share lengths. Extra shares beyond `k`
+are ignored (only the first `k` are used), so a wrong extra share cannot silently corrupt a valid
+set.
+
+### Notes
+
+- `k = 1` degenerates to "any single holder", and `k = n` requires everyone.
+- The `n` and `k` values are covered by the streaming MAC, so they cannot be tampered with in stream
+  mode.
+- Shares mode is mutually exclusive with recipient mode, and the decoy PIN is not available.
 
 ## Encryption
 
@@ -190,6 +237,6 @@ The sidecar is read lazily (in the browser via `File.slice`), so reading and dec
 ## Compatibility contract
 
 The Python core (`lockhtml/core.py`) and the JavaScript implementations (the viewer and the GUI)
-must produce and consume byte-identical payloads. This is enforced in CI by locking a file with the
+must produce and consume byte-identical payloads, including the GF(256) arithmetic used for shares. This is enforced in CI by locking a file with the
 JavaScript code path and decrypting it with the Python CLI, and vice versa, and by a headless-browser
 end-to-end test covering both containers (`tools/e2e_browser.mjs`).

@@ -61,6 +61,23 @@ X25519 hybrid encryption was reviewed against the usual ECIES pitfalls:
 **Known limitation.** A leaked private key cannot be revoked; anyone holding it can open every file
 locked to that key. Key rotation is the only remedy, and it is the user's responsibility.
 
+## Shares mode review (v1.4)
+
+Shamir secret sharing was reviewed against the standard failure modes:
+
+| Risk | Mitigation | Test |
+| --- | --- | --- |
+| Wrong field arithmetic | GF(256) checked against the FIPS-197 vector and all 255 inverses | `test_gf_arithmetic` |
+| Python and JS disagree | Both implement the same polynomial; cross-checked by browser e2e and GUI→Python | `e2e_browser.mjs`, `e2e_gui_verify.py` |
+| Fewer than k shares leak the secret | Any 2 of a 3-of-5 set must not reconstruct | `test_shamir_insufficient_shares` |
+| Duplicate / invalid indices | Rejected outright | `test_shamir_rejects_bad_shares` |
+| A wrong extra share corrupting a valid set | Only the first k shares are used | `test_shares_mode_round_trip` |
+| Tampering with n or k | Covered by the streaming MAC | `test_shares_stream_metadata_tamper` |
+| Shares leaking into the locked file | Shares are returned separately and never embedded | `test_shares_mode_round_trip` asserts plaintext absence |
+
+**Known limitation.** Any *k* holders can reconstruct the seed, and a reconstructed seed cannot be
+revoked — the file must be re-locked with a fresh split if shares are exposed.
+
 ## Findings
 
 ### Fixed during this cycle
@@ -72,6 +89,7 @@ locked to that key. Key rotation is the only remedy, and it is the user's respon
 | 3 | A minifier configuration produced assets that failed to parse. | Low | Config corrected; CI now rebuilds and diffs the generated assets so a broken build cannot be committed. |
 | 4 | `unlock` with `-o` stopped writing the plaintext for the embedded container after the streaming branch was added. | Medium | Caught by the test suite; fixed and covered by `test_cli_lock_and_unlock`. |
 | 5 | `build_locked_html` still required a positional `pin`, so recipient mode could not be used through it. | Low | Made optional; covered by the recipient CLI test. |
+| 6 | The GUI's shares helper referenced a non-existent `payload_pin()` function. | Low | Caught while wiring the UI; replaced with the direct argument. |
 
 ### Reviewed and judged acceptable
 

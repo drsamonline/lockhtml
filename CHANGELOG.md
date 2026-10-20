@@ -4,6 +4,27 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-10-20
+
+### Added
+- **Shamir secret sharing** — split a file's key into *n* shares so that any *k* of them (and no
+  fewer) can open it. `lock --shares 5:3` writes a `.shares.txt` file to distribute separately.
+- `unlock --shares <file>` (one share per line) or `--share <b64>` (repeatable).
+- Shares mode works in the **streaming container** and can be combined with a PIN and a keyfile.
+- GUI support: a share-split field on the lock tab and a shares box on unlock.
+- GF(256) arithmetic and Shamir split/combine implemented identically in Python and JavaScript.
+
+### Changed
+- Streaming encryption was factored into `_stream_write`, shared by the PIN, recipient and shares
+  paths.
+- `docs/FORMAT.md` now specifies shares mode and its share encoding.
+
+### Security
+- The share count and threshold are covered by the streaming MAC, so they cannot be tampered with.
+- Reconstruction rejects duplicate indices, index 0, and ragged share lengths; extra shares beyond
+  the threshold are ignored rather than trusted.
+- The decoy PIN and recipient mode cannot be combined with shares.
+
 ## [1.3.0] - 2026-10-20
 
 ### Added
@@ -88,6 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-platform CLI and a single-file browser GUI.
 - GitHub Actions CI (Linux/Windows/macOS, Python 3.9–3.12) and GitHub Pages deployment.
 
+[1.4.0]: https://github.com/drsamonline/lockhtml/releases/tag/v1.4.0
 [1.3.0]: https://github.com/drsamonline/lockhtml/releases/tag/v1.3.0
 [1.1.0]: https://github.com/drsamonline/lockhtml/releases/tag/v1.1.0
 [1.0.0]: https://github.com/drsamonline/lockhtml/releases/tag/v1.0.0

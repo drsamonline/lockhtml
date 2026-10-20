@@ -14,6 +14,7 @@ from .core import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_KDF,
     build_locked_html,
+    build_shared_html,
     extract_payload,
     generate_recipient_key,
     generate_signing_key,
@@ -26,6 +27,7 @@ from .core import (
     save_signing_key,
     stream_decrypt_file,
     stream_encrypt_file,
+    stream_encrypt_shares_file,
     unlock,
 )
 
@@ -59,10 +61,26 @@ def cmd_lock(args: argparse.Namespace) -> int:
     if args.to:
         src = Path(args.to)
         recipient = parse_recipient_public(src.read_text(encoding="utf-8") if src.is_file() else args.to)
-    if not args.pin and recipient is None:
-        print("error: provide --pin, or --to <recipient public key>", file=sys.stderr)
+
+    share_spec = None
+    if args.shares:
+        try:
+            n_s, k_s = args.shares.lower().replace("of", ":").split(":")
+            share_spec = (int(n_s), int(k_s))
+        except Exception:
+            print("error: --shares must look like N:K (e.g. 5:3)", file=sys.stderr)
+            return 2
+        if not (1 <= share_spec[1] <= share_spec[0] <= 255):
+            print("error: --shares needs 1 <= k <= n <= 255", file=sys.stderr)
+            return 2
+
+    if not args.pin and recipient is None and share_spec is None:
+        print("error: provide --pin, --to <recipient public key>, or --shares N:K", file=sys.stderr)
         return 2
-    if args.decoy_pin and recipient is not None:
+    if share_spec is not None and recipient is not None:
+        print("error: --shares and --to cannot be combined", file=sys.stderr)
+        return 2
+    if args.decoy_pin and (recipient is not None or share_spec is not None):
         print("error: --decoy-pin is only available in PIN mode", file=sys.stderr)
         return 2
 
@@ -89,7 +107,27 @@ def cmd_lock(args: argparse.Namespace) -> int:
         name = None if is_html else src.name
 
         try:
-            if args.stream:
+            if share_spec is not None:
+                n, k = share_spec
+                common = dict(keyfile=keyfile, one_time=args.one_time, max_views=args.max_views,
+                              not_before=args.not_before, expires=args.expires,
+                              watermark=args.watermark, kind=kind, name=name, sign_key=sign_key)
+                if args.stream:
+                    bin_path = dest.with_suffix(".bin")
+                    payload, share_strings = stream_encrypt_shares_file(
+                        str(src), args.pin, str(bin_path), n=n, k=k,
+                        chunk_size=args.chunk_size * 1024, **common)
+                    dest.write_text(render_viewer(payload), encoding="utf-8")
+                    extra = f" + {bin_path}"
+                else:
+                    locked, share_strings = build_shared_html(
+                        _read_bytes(src), args.pin, n=n, k=k, **common)
+                    dest.write_text(locked, encoding="utf-8")
+                    extra = ""
+                shares_path = Path(str(dest.with_suffix("")) + ".shares.txt")
+                shares_path.write_text("\n".join(share_strings) + "\n", encoding="utf-8")
+                extra += f" + {shares_path}"
+            elif args.stream:
                 bin_path = dest.with_suffix(".bin")
                 payload = stream_encrypt_file(
                     str(src), args.pin, str(bin_path),
@@ -118,9 +156,11 @@ def cmd_lock(args: argparse.Namespace) -> int:
             continue
 
         tags = []
-        if recipient is not None:
+        if share_spec is not None:
+            tags.append(f"shares={share_spec[1]}-of-{share_spec[0]}")
+        elif recipient is not None:
             tags.append("recipient")
-        elif args.kdf:
+        else:
             tags.append(args.kdf)
         if args.stream:
             tags.append("streaming")
@@ -144,6 +184,13 @@ def cmd_unlock(args: argparse.Namespace) -> int:
         return 2
     keyfile = Path(args.keyfile).read_bytes() if args.keyfile else None
     private_key = load_recipient_key(args.key) if args.key else None
+    shares = list(args.share) if args.share else None
+    if args.shares:
+        share_file = Path(args.shares)
+        if not share_file.is_file():
+            print(f"error: shares file not found: {share_file}", file=sys.stderr)
+            return 2
+        shares = [ln.strip() for ln in share_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
     text = src.read_text(encoding="utf-8")
     try:
         payload = extract_payload(text)
@@ -154,9 +201,9 @@ def cmd_unlock(args: argparse.Namespace) -> int:
                 return 2
             plaintext = stream_decrypt_file(
                 str(data_path), payload, args.pin,
-                str(args.output) if args.output else None, keyfile, private_key)
+                str(args.output) if args.output else None, keyfile, private_key, shares)
         else:
-            plaintext = unlock(text, args.pin, keyfile, private_key)
+            plaintext = unlock(text, args.pin, keyfile, private_key, shares)
     except Exception:
         print("error: wrong PIN, missing keyfile, or not a LockHTML file", file=sys.stderr)
         return 1
@@ -244,6 +291,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_lock.add_argument("--sign", default=None, help="Ed25519 private key (PEM) to sign the file")
     p_lock.add_argument("--decoy-pin", default=None, help="duress PIN that opens a harmless decoy page")
     p_lock.add_argument("--decoy-file", default=None, help="HTML file to use as the decoy page")
+    p_lock.add_argument("--shares", default=None, metavar="N:K",
+                        help="split the key into N shares, any K of which open the file")
     p_lock.add_argument("--stream", action="store_true",
                         help="streaming container: write ciphertext to a sidecar .bin (for large files)")
     p_lock.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE // 1024,
@@ -256,6 +305,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_unlock.add_argument("--key", default=None, help="X25519 private key (PEM) for recipient-mode files")
     p_unlock.add_argument("--keyfile", default=None, help="keyfile, if one is required")
     p_unlock.add_argument("--data", default=None, help="sidecar .bin for a streaming container")
+    p_unlock.add_argument("--shares", default=None, metavar="FILE",
+                          help="file with one key share per line")
+    p_unlock.add_argument("--share", action="append", default=None, metavar="B64",
+                          help="a single key share (repeatable)")
     p_unlock.add_argument("-o", "--output", help="write plaintext here (default: stdout)")
     p_unlock.set_defaults(func=cmd_unlock)
 

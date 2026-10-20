@@ -32,6 +32,9 @@
   .kf { margin-bottom: 12px; text-align: left; }
   .kf label { display: block; font-size: 12px; color: #9aa3b2; margin-bottom: 6px; }
   .kf input[type=file] { width: 100%; font-size: 12px; color: #c9d1e0; }
+  textarea { width: 100%; min-height: 62px; margin-top: 4px; background: #0f1115; color: #fff;
+             border: 1px solid #2c3340; border-radius: 10px; padding: 8px 10px; font-size: 12px;
+             font-family: ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
   button {
     width: 100%; margin-top: 12px; padding: 13px; font-size: 15px; font-weight: 600;
     color: #fff; background: linear-gradient(180deg,#5a86ff,#3a6bf0);
@@ -77,6 +80,11 @@
     <label id="keyLabel">Private key required</label>
     <input type="file" id="privkey">
   </div>
+  <div class="kf hidden" id="sharesRow">
+    <label id="sharesLabel">Key shares required</label>
+    <textarea id="shares" placeholder="one share per line"></textarea>
+    <input type="file" id="sharesFile">
+  </div>
   <input type="password" id="pin" inputmode="numeric" autocomplete="off" placeholder="Enter PIN" aria-label="PIN">
   <button id="unlock">Unlock</button>
   <div class="msg" id="msg" role="status" aria-live="polite"></div>
@@ -119,7 +127,10 @@
       noData: "This document also needs its data file.",
       key: "Private key required (your .pem file)",
       noKey: "This document needs your private key.",
-      badKey: "That does not look like a valid X25519 private key." },
+      badKey: "That does not look like a valid X25519 private key.",
+      shares: "Key shares required (paste one per line, or drop the .shares.txt)",
+      noShares: "This document needs its key shares.",
+      badShares: "Those shares could not open the document." },
     hi: { title: "\u0938\u0941\u0930\u0915\u094d\u0937\u093f\u0924 \u0926\u0938\u094d\u0924\u093e\u0935\u0947\u091c\u093c", sub: "\u0907\u0938 \u0926\u0938\u094d\u0924\u093e\u0935\u0947\u091c\u093c \u0915\u094b \u0916\u094b\u0932\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f PIN \u0926\u0930\u094d\u091c \u0915\u0930\u0947\u0902\u0964",
       ph: "PIN \u0926\u0930\u094d\u091c \u0915\u0930\u0947\u0902", unlock: "\u0916\u094b\u0932\u0947\u0902", kf: "\u0915\u0940\u092b\u093c\u093e\u0907\u0932 \u0906\u0935\u0936\u094d\u092f\u0915 \u0939\u0948",
       wrong: "\u0917\u0932\u0924 PIN\u0964 \u092b\u093f\u0930 \u0938\u0947 \u092a\u094d\u0930\u092f\u093e\u0938 \u0915\u0930\u0947\u0902\u0964", empty: "\u0915\u0943\u092a\u092f\u093e PIN \u0926\u0930\u094d\u091c \u0915\u0930\u0947\u0902\u0964",
@@ -154,6 +165,7 @@
   setText("kfLabel", T.kf);
   setText("dataLabel", T.data || I18N.en.data);
   setText("keyLabel", T.key || I18N.en.key);
+  setText("sharesLabel", T.shares || I18N.en.shares);
   setText("dlTitle", T.fileReady);
   setText("dlBtn", T.download);
 
@@ -173,6 +185,79 @@
     var k = await s.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
     return new Uint8Array(await s.sign("HMAC", k, data));
   }
+  /* ---- Shamir secret sharing over GF(256) (mirrors the Python core) ---- */
+  function gfMul(a, b) {
+    var p = 0;
+    for (var i = 0; i < 8; i++) {
+      if (b & 1) p ^= a;
+      var hi = a & 0x80;
+      a = (a << 1) & 0xFF;
+      if (hi) a ^= 0x1B;
+      b >>= 1;
+    }
+    return p & 0xFF;
+  }
+  function gfInv(a) {
+    var r = 1, base = a, e = 254;
+    while (e) { if (e & 1) r = gfMul(r, base); base = gfMul(base, base); e >>= 1; }
+    return r;
+  }
+  function shamirCombine(shares) {
+    var len = shares[0].length - 1;
+    var xs = [];
+    for (var q = 0; q < shares.length; q++) xs.push(shares[q][0]);
+    var out = new Uint8Array(len);
+    for (var j = 0; j < len; j++) {
+      var acc = 0;
+      for (var i = 0; i < shares.length; i++) {
+        var num = 1, den = 1;
+        for (var m = 0; m < shares.length; m++) {
+          if (m === i) continue;
+          num = gfMul(num, xs[m]);
+          den = gfMul(den, xs[i] ^ xs[m]);
+        }
+        acc ^= gfMul(shares[i][1 + j], gfMul(num, gfInv(den)));
+      }
+      out[j] = acc;
+    }
+    return out;
+  }
+  var shareStrings = null;
+  async function readShares() {
+    var lines = ($("shares").value || "").split(/\s+/).filter(Boolean);
+    var inp = $("sharesFile");
+    if (inp && inp.files && inp.files[0]) {
+      var text = await inp.files[0].text();
+      lines = lines.concat(text.split(/\s+/).filter(Boolean));
+    }
+    var seen = {}, out = [];
+    for (var i = 0; i < lines.length; i++) {
+      if (!seen[lines[i]]) { seen[lines[i]] = 1; out.push(lines[i]); }
+    }
+    return out;
+  }
+  async function hkdf32(ikm, salt, info) {
+    var s = subtle();
+    var hk = await s.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
+    return new Uint8Array(await s.deriveBits(
+      { name: "HKDF", hash: "SHA-256", salt: salt, info: enc(info) }, hk, 256));
+  }
+  async function sharesRawKey(pin, keyfile) {
+    var k = (payload.kdfparams && payload.kdfparams.k) || shareStrings.length;
+    var raw = [];
+    for (var i = 0; i < k; i++) raw.push(b64ToBytes(shareStrings[i]));
+    var seed = shamirCombine(raw);
+    var ikm = seed;
+    if (payload.pin && pin) {
+      var p = enc(pin);
+      ikm = new Uint8Array(seed.length + p.length);
+      ikm.set(seed, 0); ikm.set(p, seed.length);
+    }
+    var key = await hkdf32(ikm, b64ToBytes(payload.salt), "lockhtml/shamir");
+    if (keyfile && keyfile.length) key = await hmac256(key, keyfile);
+    return key;
+  }
+
   var privateKeyObj = null;
   async function importPrivateKey(file) {
     var text = await file.text();
@@ -190,17 +275,15 @@
       ikm = new Uint8Array(shared.length + p.length);
       ikm.set(shared, 0); ikm.set(p, shared.length);
     }
-    var hk = await s.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
-    var raw = new Uint8Array(await s.deriveBits({
-      name: "HKDF", hash: "SHA-256", salt: b64ToBytes(payload.salt),
-      info: enc((payload.kdfparams && payload.kdfparams.info) || "lockhtml/x25519")
-    }, hk, 256));
+    var raw = await hkdf32(ikm, b64ToBytes(payload.salt),
+                           (payload.kdfparams && payload.kdfparams.info) || "lockhtml/x25519");
     if (keyfile && keyfile.length) raw = await hmac256(raw, keyfile);
     return raw;
   }
   async function rawKey(pin, salt, keyfile) {
     var s = subtle();
     if (payload.mode === "recipient") return recipientRawKey(pin, keyfile);
+    if (payload.mode === "shares") return sharesRawKey(pin, keyfile);
     var kdf = kdfName(), raw;
     if (kdf === "argon2id" || kdf === "argon2") {
       if (typeof argon2 === "undefined") throw new Error("nokdf");
@@ -346,7 +429,8 @@
   function metaString(p) {
     var kp = p.kdfparams || {};
     var kps = ("m" in kp) ? (kp.m + "," + kp.t + "," + kp.p)
-            : (("info" in kp) ? String(kp.info) : String(kp.iter));
+            : (("n" in kp) ? (String(kp.info) + "," + kp.n + "," + kp.k)
+            : (("info" in kp) ? String(kp.info) : String(kp.iter)));
     var parts = ["v2", p.kdf, kps, String(p.chunkSize), String(p.chunkCount), String(p.kind),
             (p.name || ""), String(p.salt), String(p.baseiv),
             (p.maxviews == null ? "" : String(p.maxviews)),
@@ -405,11 +489,21 @@
 
   async function attempt() {
     var pin = $("pin").value;
-    var needPin = !(payload.mode === "recipient" && !payload.pin);
+    var keyMode = (payload.mode === "recipient" || payload.mode === "shares");
+    var needPin = !(keyMode && !payload.pin);
     if (needPin && !pin) { $("msg").textContent = T.empty; $("msg").className = "msg err"; return; }
     if (!subtle()) { $("msg").textContent = T.norender; $("msg").className = "msg err"; return; }
     var keyfile = await readKeyfile();
     if (payload.keyfile && !keyfile) { $("msg").textContent = T.noKeyfile; $("msg").className = "msg err"; return; }
+
+    if (payload.mode === "shares") {
+      shareStrings = await readShares();
+      var need = (payload.kdfparams && payload.kdfparams.k) || 1;
+      if (shareStrings.length < need) {
+        $("msg").textContent = (T.noShares || I18N.en.noShares);
+        $("msg").className = "msg err"; return;
+      }
+    }
 
     if (payload.mode === "recipient") {
       var pk = $("privkey").files[0];
@@ -481,6 +575,10 @@
   if (payload.container === "stream") $("dataRow").classList.remove("hidden");
   if (payload.mode === "recipient") {
     $("keyRow").classList.remove("hidden");
+    if (!payload.pin) $("pin").classList.add("hidden");
+  }
+  if (payload.mode === "shares") {
+    $("sharesRow").classList.remove("hidden");
     if (!payload.pin) $("pin").classList.add("hidden");
   }
   var meta = [];

@@ -118,6 +118,22 @@ ok("recipient: binary -> download", (await waitStage()) && (await vis("dlwrap"))
 await open("r_stream.html"); await upload("#privkey", "rec.pem"); await upload("#datafile", "r_stream.bin"); await page.click("#unlock");
 ok("recipient: streaming bundle", (await waitStage()) && (await vis("dlwrap")));
 
+// ---- Shamir shares mode ----
+await open("sh_embedded.html"); await upload("#sharesFile", "sh_embedded.shares.txt"); await page.click("#unlock");
+ok("shares: 3-of-5 opens via .shares.txt", (await waitStage()) && (await srcdoc()).includes("ORION-7742"));
+
+await open("sh_embedded.html"); await upload("#sharesFile", "sh_two.txt"); await page.click("#unlock");
+ok("shares: 2 of 3 rejected", !(await waitStage()));
+
+await open("sh_embedded.html"); await page.click("#unlock");
+ok("shares: none rejected", !(await waitStage()));
+
+await open("sh_pin.html"); await upload("#sharesFile", "sh_pin.shares.txt"); await type("4821");
+ok("shares: with PIN", (await waitStage()) && (await srcdoc()).includes("ORION-7742"));
+
+await open("sh_stream.html"); await upload("#sharesFile", "sh_stream.shares.txt"); await upload("#datafile", "sh_stream.bin"); await page.click("#unlock");
+ok("shares: streaming bundle", (await waitStage()) && (await vis("dlwrap")));
+
 await browser.close();
 const failed = results.filter((r) => !r[1]).length;
 console.log(`\n${results.length - failed}/${results.length} browser checks passed`);

@@ -19,6 +19,13 @@ Legend: ✅ shipped · 🔜 planned · 💭 under consideration
 - ✅ Payload format v2 with a written spec
 - ✅ Build-time minification with verification
 
+## Shipped in v1.4
+
+- ✅ **Shamir secret sharing** — split the key so any *k* of *n* holders can open it
+- ✅ `.shares.txt` distribution, `--shares` / `--share`, embedded + streaming
+- ✅ Shares combinable with a PIN and a keyfile
+- ✅ GF(256) Shamir implemented in both Python and JavaScript
+
 ## Shipped in v1.3
 
 - ✅ **X25519 recipient mode** — lock to a public key, no shared secret (embedded + streaming)
@@ -37,7 +44,6 @@ Legend: ✅ shipped · 🔜 planned · 💭 under consideration
 ## Planned
 
 ### 🔜 Cryptography
-- **Shamir secret sharing** — split the unlock key so *k* of *n* holders must combine.
 - **Auto-calibrated KDF cost** — measure the device and pick the strongest parameters it can handle
   in a fixed time budget, stored per file.
 - **Hidden volume** — a decoy and a real payload in one file with plausible deniability.

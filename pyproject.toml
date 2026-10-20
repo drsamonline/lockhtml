@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lockhtml"
-version = "1.0.0"
+version = "1.1.0"
 description = "PIN-protect and one-time-view any HTML file with AES-256-GCM. Cross-platform CLI plus a browser-based GUI."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Dr Sohil Momin", email = "sohilmomin2000@gmail.com" }]
 keywords = ["html", "encryption", "aes", "security", "pin", "self-destruct", "cli", "gui"]
-dependencies = ["cryptography>=41"]
+dependencies = ["cryptography>=41", "argon2-cffi>=23"]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Environment :: Console",
@@ -43,7 +43,13 @@ lockhtml = "lockhtml.cli:main"
 include = ["lockhtml*"]
 
 [tool.setuptools.package-data]
-lockhtml = ["templates/*.html", "gui/*.html"]
+lockhtml = [
+  "templates/viewer.html",
+  "templates/viewer-argon2.html",
+  "gui/index.html",
+  "gui/manifest.webmanifest",
+  "gui/sw.js",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

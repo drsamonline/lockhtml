@@ -5,8 +5,11 @@ on:
     branches: [main]
     paths:
       - "lockhtml/gui/**"
-      - "lockhtml/templates/viewer.html"
-      - "tools/build_gui.py"
+      - "lockhtml/templates/**"
+      - "tools/build.py"
+      - "tools/minify.mjs"
+      - "package.json"
+      - "package-lock.json"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -27,12 +30,23 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Regenerate the GUI from source
-        run: python tools/build_gui.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - name: Install build tooling
+        run: npm ci
+      - name: Regenerate and minify the GUI from source
+        run: |
+          python tools/build.py
+          node tools/minify.mjs
       - name: Stage the site
         run: |
           mkdir -p _site
           cp lockhtml/gui/index.html _site/index.html
+          cp lockhtml/gui/manifest.webmanifest _site/manifest.webmanifest
+          cp lockhtml/gui/sw.js _site/sw.js
+          cp lockhtml/gui/icon.svg _site/icon.svg
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

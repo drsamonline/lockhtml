@@ -17,9 +17,10 @@ const DOC = "<!DOCTYPE html><html><body><h1>From GUI</h1><p>ORION-7742</p></body
 const PIN = "4821";
 
 const html = fs.readFileSync(GUI, "utf8");
-const m = html.match(/const VIEWER_TEMPLATE = ("(?:[^"\\]|\\.)*");/);
+// The minifier may switch quote style, so accept either and evaluate the literal.
+const m = html.match(/\bVIEWER_TEMPLATE\s*=\s*('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")/);
 if (!m) throw new Error("VIEWER_TEMPLATE not found in " + GUI);
-const VIEWER_TEMPLATE = JSON.parse(m[1]);
+const VIEWER_TEMPLATE = Function("return " + m[1])();
 if (!VIEWER_TEMPLATE.includes("__PAYLOAD__")) throw new Error("template missing __PAYLOAD__");
 console.log("viewer template extracted   : OK");
 
@@ -41,14 +42,16 @@ const key = await deriveKey(PIN, salt, 250000, ["encrypt", "decrypt"]);
 const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(DOC)));
 const id = Buffer.from(new Uint8Array(await crypto.subtle.digest("SHA-256", ct)).slice(0, 8)).toString("hex");
 
-const payload = { v: 1, kdf: "PBKDF2-SHA256", iter: 250000, salt: b64(salt), iv: b64(iv), ct: b64(ct), id, onetime: false };
+const payload = { v: 2, kind: "html", name: null, kdf: "pbkdf2", kdfparams: { iter: 250000 },
+  salt: b64(salt), iv: b64(iv), ct: b64(ct), id, onetime: false, maxviews: null,
+  notbefore: null, expires: null, watermark: null, keyfile: false, sig: null, decoy: null };
 const locked = VIEWER_TEMPLATE.replace("__PAYLOAD__", JSON.stringify(payload));
 
 if (locked.includes("ORION-7742")) throw new Error("plaintext leaked into locked file");
 console.log("plaintext leak check        : OK");
 
 // round-trip inside Node
-const key2 = await deriveKey(PIN, unb64(payload.salt), payload.iter, ["decrypt"]);
+const key2 = await deriveKey(PIN, unb64(payload.salt), payload.kdfparams.iter, ["decrypt"]);
 const back = dec.decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(payload.iv) }, key2, unb64(payload.ct)));
 if (back !== DOC) throw new Error("round-trip mismatch");
 console.log("Web Crypto round-trip       : OK");

@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Protected document</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: radial-gradient(1200px 600px at 50% -10%, #1b2130 0%, #0f1115 60%);
+    color: #e8eaed; display: flex; align-items: center; justify-content: center;
+  }
+  .card {
+    width: min(440px, 92vw); padding: 30px 28px;
+    background: #171a21; border: 1px solid #262b36; border-radius: 16px;
+    box-shadow: 0 18px 50px rgba(0,0,0,.5); text-align: center;
+  }
+  .lock { margin-bottom: 12px; color: #a9bcff; line-height: 0; }
+  .lock svg { width: 40px; height: 40px; }
+  h1 { font-size: 17px; font-weight: 600; margin: 0 0 6px; }
+  p.sub { font-size: 13px; color: #9aa3b2; margin: 0 0 18px; line-height: 1.5; }
+  input[type=password] {
+    width: 100%; padding: 13px 14px; font-size: 17px; letter-spacing: 3px;
+    background: #0f1115; color: #fff; border: 1px solid #2c3340; border-radius: 10px;
+    text-align: center; outline: none; transition: border-color .15s;
+  }
+  input[type=password]:focus { border-color: #4c7dff; }
+  .kf { margin-bottom: 12px; text-align: left; }
+  .kf label { display: block; font-size: 12px; color: #9aa3b2; margin-bottom: 6px; }
+  .kf input[type=file] { width: 100%; font-size: 12px; color: #c9d1e0; }
+  button {
+    width: 100%; margin-top: 12px; padding: 13px; font-size: 15px; font-weight: 600;
+    color: #fff; background: linear-gradient(180deg,#5a86ff,#3a6bf0);
+    border: 0; border-radius: 10px; cursor: pointer; transition: filter .15s;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:disabled { opacity: .5; cursor: default; filter: none; }
+  .msg { min-height: 18px; font-size: 13px; margin-top: 12px; }
+  .msg.err { color: #ff6b6b; }
+  .msg.warn { color: #ffb454; }
+  .msg.ok { color: #33d17a; }
+  .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px;
+           border: 1px solid #2c3340; color: #9aa3b2; margin: 2px 3px 0; }
+  .meta { font-size: 11px; color: #6b7280; margin-top: 16px; line-height: 1.6; }
+  #stage { position: fixed; inset: 0; background: #0f1115; }
+  #viewer { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
+  #dlwrap { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+  #dlwrap .box { background: #171a21; border: 1px solid #262b36; border-radius: 16px;
+                 padding: 30px; text-align: center; max-width: 420px; }
+  #wm { position: fixed; inset: 0; pointer-events: none; z-index: 2147483647; overflow: hidden;
+        display: flex; align-items: center; justify-content: center; }
+  #wm span { font-size: 34px; font-weight: 800; color: rgba(120,140,200,.18);
+             transform: rotate(-28deg); white-space: nowrap; text-transform: uppercase;
+             letter-spacing: 6px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="card" id="gate">
+  <div class="lock" id="lockIcon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2.5"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+  <h1 id="gateTitle">Protected document</h1>
+  <p class="sub" id="gateSub">Enter the PIN to unlock this document.</p>
+  <div class="kf hidden" id="kfRow">
+    <label id="kfLabel">Keyfile required</label>
+    <input type="file" id="keyfile">
+  </div>
+  <input type="password" id="pin" inputmode="numeric" autocomplete="off" placeholder="Enter PIN" aria-label="PIN">
+  <button id="unlock">Unlock</button>
+  <div class="msg" id="msg" role="status" aria-live="polite"></div>
+  <div class="meta" id="meta"></div>
+</div>
+
+<div id="stage" class="hidden">
+  <iframe id="viewer" sandbox="allow-scripts allow-forms allow-popups"></iframe>
+  <div id="dlwrap" class="hidden"><div class="box">
+    <div class="lock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg></div>
+    <h1 id="dlTitle">File ready</h1>
+    <p class="sub" id="dlSub"></p>
+    <button id="dlBtn">Download</button>
+  </div></div>
+</div>
+<div id="wm" class="hidden"><span id="wmText"></span></div>
+
+<script id="payload" type="application/json">__PAYLOAD__</script>
+<!--__ARGON2__-->
+<script>
+(function () {
+  "use strict";
+  var payload = JSON.parse(document.getElementById("payload").textContent);
+  var $ = function (id) { return document.getElementById(id); };
+
+  var I18N = {
+    en: { title: "Protected document", sub: "Enter the PIN to unlock this document.",
+      ph: "Enter PIN", unlock: "Unlock", kf: "Keyfile required (drop the file you were given)",
+      wrong: "Wrong PIN. Try again.", empty: "Please enter the PIN.",
+      decrypting: "Decrypting\u2026", expired: "This document has expired",
+      expiredSub: "It has already been opened the permitted number of times, or its time window has passed.",
+      early: "Not yet available", earlySub: "This document cannot be opened until its release time.",
+      fileReady: "File ready", download: "Download",
+      verifyOk: "Signature verified \u2014 from a trusted sender.",
+      verifyBad: "WARNING: signature check FAILED. Do not trust this file.",
+      verifyNa: "A signature is present but this browser cannot verify it.",
+      noKeyfile: "This document also needs its keyfile.", onetime: "One-time view.",
+      norender: "No Web Crypto in this browser.", nokdf: "This file needs Argon2 support." },
+    hi: { title: "\u0938\u0941\u0930\u0915\u094d\u0937\u093f\u0924 \u0926\u0938\u094d\u0924\u093e\u0935\u0947\u091c\u093c", sub: "\u0907\u0938 \u0926\u0938\u094d\u0924\u093e\u0935\u0947\u091c\u093c \u0915\u094b \u0916\u094b\u0932\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f PIN \u0926\u0930\u094d\u091c \u0915\u0930\u0947\u0902\u0964",
+      ph: "PIN \u0926\u0930\u094d\u091c \u0915\u0930\u0947\u0902", unlock: "\u0916\u094b\u0932\u0947\u0902", kf: "\u0915\u0940\u092b\u093c\u093e\u0907\u0932 \u0906\u0935\u0936\u094d\u092f\u0915 \u0939\u0948",
+      wrong: "\u0917\u0932\u0924 PIN\u0964 \u092b\u093f\u0930 \u0938\u0947 \u092a\u094d\u0930\u092f\u093e\u0938 \u0915\u0930\u0947\u0902\u0964", empty: "\u0915\u0943\u092a\u092f\u093e PIN \u0926\u0930\u094d\u091c \u0915\u0930\u0947\u0902\u0964",
+      decrypting: "\u0921\u093f\u0915\u094d\u0930\u093f\u092a\u094d\u091f \u0939\u094b \u0930\u0939\u093e \u0939\u0948\u2026", expired: "\u092f\u0939 \u0926\u0938\u094d\u0924\u093e\u0935\u0947\u091c\u093c \u0938\u092e\u093e\u092a\u094d\u0924 \u0939\u094b \u0917\u092f\u093e \u0939\u0948",
+      expiredSub: "\u0907\u0938\u0947 \u0905\u0928\u0941\u092e\u0924 \u0938\u0902\u0916\u094d\u092f\u093e \u092e\u0947\u0902 \u0916\u094b\u0932\u093e \u091c\u093e \u091a\u0941\u0915\u093e \u0939\u0948\u0964",
+      early: "\u0905\u092d\u0940 \u0909\u092a\u0932\u092c\u094d\u0927 \u0928\u0939\u0940\u0902", earlySub: "\u092f\u0939 \u0926\u0938\u094d\u0924\u093e\u0935\u0947\u091c\u093c \u0905\u092d\u0940 \u0928\u0939\u0940\u0902 \u0916\u0941\u0932 \u0938\u0915\u0924\u093e\u0964",
+      fileReady: "\u092b\u093c\u093e\u0907\u0932 \u0924\u0948\u092f\u093e\u0930 \u0939\u0948", download: "\u0921\u093e\u0909\u0928\u0932\u094b\u0921 \u0915\u0930\u0947\u0902",
+      verifyOk: "\u0939\u0938\u094d\u0924\u093e\u0915\u094d\u0937\u0930 \u0938\u0924\u094d\u092f\u093e\u092a\u093f\u0924\u0964", verifyBad: "\u091a\u0947\u0924\u093e\u0935\u0928\u0940: \u0939\u0938\u094d\u0924\u093e\u0915\u094d\u0937\u0930 \u091c\u093e\u0902\u091a \u0935\u093f\u092b\u0932\u0964",
+      verifyNa: "\u0939\u0938\u094d\u0924\u093e\u0915\u094d\u0937\u0930 \u092e\u094c\u091c\u0942\u0926 \u0939\u0948 \u092a\u0930\u0928\u094d\u0924\u0941 \u092f\u0939 \u092c\u094d\u0930\u093e\u0909\u091c\u093c\u0930 \u0938\u0924\u094d\u092f\u093e\u092a\u093f\u0924 \u0928\u0939\u0940\u0902 \u0915\u0930 \u0938\u0915\u0924\u093e\u0964",
+      noKeyfile: "\u0907\u0938 \u0926\u0938\u094d\u0924\u093e\u0935\u0947\u091c\u093c \u0915\u094b \u0915\u0940\u092b\u093c\u093e\u0907\u0932 \u092d\u0940 \u091a\u093e\u0939\u093f\u090f\u0964", onetime: "\u090f\u0915-\u092c\u093e\u0930 \u0926\u0947\u0916\u0947\u0902\u0964",
+      norender: "\u0907\u0938 \u092c\u094d\u0930\u093e\u0909\u091c\u093c\u0930 \u092e\u0947\u0902 Web Crypto \u0928\u0939\u0940\u0902\u0964", nokdf: "\u0907\u0938 \u092b\u093c\u093e\u0907\u0932 \u0915\u094b Argon2 \u0938\u092e\u0930\u094d\u0925\u0928 \u091a\u093e\u0939\u093f\u090f\u0964" },
+    gu: { title: "\u0ab8\u0ac1\u0ab0\u0a95\u0acd\u0ab7\u0abf\u0aa4 \u0aa6\u0ab8\u0acd\u0aa4\u0abe\u0ab5\u0ac7\u0a9c", sub: "\u0a86 \u0aa6\u0ab8\u0acd\u0aa4\u0abe\u0ab5\u0ac7\u0a9c \u0a96\u0acb\u0ab2\u0ab5\u0abe PIN \u0aa6\u0abe\u0a96\u0ab2 \u0a95\u0ab0\u0acb.",
+      ph: "PIN \u0aa6\u0abe\u0a96\u0ab2 \u0a95\u0ab0\u0acb", unlock: "\u0a96\u0acb\u0ab2\u0acb", kf: "\u0a95\u0ac0\u0aab\u0abe\u0a87\u0ab2 \u0a9c\u0ab0\u0ac2\u0ab0\u0ac0 \u0a9b\u0ac7",
+      wrong: "\u0a96\u0acb\u0a9f\u0acb PIN. \u0aab\u0ab0\u0ac0 \u0aaa\u0acd\u0ab0\u0aaf\u0aa4\u0acd\u0aa8 \u0a95\u0ab0\u0acb.", empty: "\u0a95\u0ac3\u0aaa\u0abe PIN \u0aa6\u0abe\u0a96\u0ab2 \u0a95\u0ab0\u0acb.",
+      decrypting: "\u0aa1\u0abf\u0a95\u0acd\u0ab0\u0abf\u0aaa\u0acd\u0a9f \u0aa5\u0a88 \u0ab0\u0ab9\u0acd\u0aaf\u0ac1\u0a82 \u0a9b\u0ac7\u2026", expired: "\u0a86 \u0aa6\u0ab8\u0acd\u0aa4\u0abe\u0ab5\u0ac7\u0a9c \u0ab8\u0aae\u0abe\u0aaa\u0acd\u0aa4 \u0aa5\u0a88 \u0a97\u0aaf\u0ac1\u0a82 \u0a9b\u0ac7",
+      expiredSub: "\u0aa4\u0ac7 \u0aaa\u0ab0\u0ab5\u0abe\u0aa8\u0a82\u0a97\u0ac0 \u0ab8\u0a82\u0a96\u0acd\u0aaf\u0abe\u0aae\u0abe\u0a82 \u0a96\u0acb\u0ab2\u0abe\u0a88 \u0a9a\u0ac1\u0a95\u0acd\u0aaf\u0ac1\u0a82 \u0a9b\u0ac7.",
+      early: "\u0ab9\u0a9c\u0ac1 \u0a89\u0aaa\u0ab2\u0aac\u0acd\u0aa7 \u0aa8\u0aa5\u0ac0", earlySub: "\u0a86 \u0aa6\u0ab8\u0acd\u0aa4\u0abe\u0ab5\u0ac7\u0a9c \u0ab9\u0a9c\u0ac1 \u0a96\u0ac1\u0ab2\u0ac0 \u0ab6\u0a95\u0abe\u0aaf \u0aa8\u0ab9\u0ac0\u0a82.",
+      fileReady: "\u0aab\u0abe\u0a87\u0ab2 \u0aa4\u0ac8\u0aaf\u0abe\u0ab0 \u0a9b\u0ac7", download: "\u0aa1\u0abe\u0a89\u0aa8\u0ab2\u0acb\u0aa1 \u0a95\u0ab0\u0acb",
+      verifyOk: "\u0ab8\u0ab9\u0ac0 \u0ab8\u0acd\u0ab5\u0abe\u0a95\u0acd\u0ab7\u0ab0\u0abf\u0aa4.", verifyBad: "\u0a9a\u0ac7\u0aa4\u0ab5\u0aa8\u0ac0: \u0ab8\u0acd\u0ab5\u0abe\u0a95\u0acd\u0ab7\u0ab0 \u0aa4\u0aaa\u0abe\u0ab8 \u0aa8\u0abf\u0ab7\u0acd\u0aab\u0ab3.",
+      verifyNa: "\u0ab8\u0acd\u0ab5\u0abe\u0a95\u0acd\u0ab7\u0ab0 \u0a9b\u0ac7 \u0aaa\u0aa3 \u0a86 \u0aac\u0acd\u0ab0\u0abe\u0a89\u0a9d\u0ab0 \u0aa4\u0aaa\u0abe\u0ab8\u0ac0 \u0ab6\u0a95\u0aa4\u0ac1\u0aa8\u0aa5\u0ac0.",
+      noKeyfile: "\u0a86 \u0aa6\u0ab8\u0acd\u0aa4\u0abe\u0ab5\u0ac7\u0a9c\u0aa8\u0ac7 \u0a95\u0ac0\u0aab\u0abe\u0a87\u0ab2 \u0aaa\u0aa3 \u0a9c\u0acb\u0a88\u0ac7.", onetime: "\u0a8f\u0a95 \u0ab5\u0abe\u0ab0 \u0a9c\u0ac1\u0a93.",
+      norender: "\u0a86 \u0aac\u0acd\u0ab0\u0abe\u0a89\u0a9d\u0ab0\u0aae\u0abe\u0a82 Web Crypto \u0aa8\u0aa5\u0ac0.", nokdf: "\u0a86 \u0aab\u0abe\u0a87\u0ab2\u0aa8\u0ac7 Argon2 \u0ab8\u0aae\u0ab0\u0acd\u0aa5\u0aa8 \u0a9c\u0acb\u0a88\u0a8f." }
+  };
+  var LANG = (navigator.language || "en").slice(0, 2).toLowerCase();
+  var T = I18N[LANG] || I18N.en;
+
+  function setText(id, txt) { var e = $(id); if (e) e.textContent = txt; }
+  setText("gateTitle", T.title);
+  setText("gateSub", T.sub);
+  $("pin").setAttribute("placeholder", T.ph);
+  setText("unlock", T.unlock);
+  setText("kfLabel", T.kf);
+  setText("dlTitle", T.fileReady);
+  setText("dlBtn", T.download);
+
+  function b64ToBytes(s) {
+    var bin = atob(s), out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  function subtle() { return (window.crypto && window.crypto.subtle) ? window.crypto.subtle : null; }
+  function enc(s) { return new TextEncoder().encode(s); }
+
+  function kdfParams() { return payload.kdfparams || (payload.iter ? { iter: payload.iter } : {}); }
+  function kdfName() { return payload.kdf || "PBKDF2-SHA256"; }
+
+  async function hmac256(keyBytes, data) {
+    var s = subtle();
+    var k = await s.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    return new Uint8Array(await s.sign("HMAC", k, data));
+  }
+  async function rawKey(pin, salt, keyfile) {
+    var s = subtle();
+    var kdf = kdfName(), raw;
+    if (kdf === "argon2id" || kdf === "argon2") {
+      if (typeof argon2 === "undefined") throw new Error("nokdf");
+      var p = kdfParams();
+      var h = await argon2.hash({
+        pass: pin, salt: salt, time: p.t || 2, mem: p.m || 19456,
+        parallelism: p.p || 1, hashLen: 32, type: argon2.ArgonType.Argon2id
+      });
+      raw = new Uint8Array(h.hash);
+    } else {
+      var base = await s.importKey("raw", enc(pin), "PBKDF2", false, ["deriveBits"]);
+      raw = new Uint8Array(await s.deriveBits(
+        { name: "PBKDF2", salt: salt, iterations: kdfParams().iter || 250000, hash: "SHA-256" },
+        base, 256));
+    }
+    // keyfile is mixed in as a pepper, matching the Python core exactly
+    if (keyfile && keyfile.length) raw = await hmac256(raw, keyfile);
+    return raw;
+  }
+  async function deriveKey(pin, keyfile) {
+    var raw = await rawKey(pin, b64ToBytes(payload.salt), keyfile);
+    return subtle().importKey("raw", raw, { name: "AES-GCM" }, false, ["decrypt"]);
+  }
+
+  async function decryptBlob(blob, pin, keyfile) {
+    var s = subtle();
+    var key;
+    if (blob === payload) { key = await deriveKey(pin, keyfile); }
+    else {
+      var saved = payload; // decoy carries its own salt/iv but same KDF params
+      payload = blob; key = await deriveKey(pin, keyfile); payload = saved;
+    }
+    return s.decrypt({ name: "AES-GCM", iv: b64ToBytes(blob.iv) }, key, b64ToBytes(blob.ct));
+  }
+
+  /* ---- Ed25519 signature verification (optional) ---- */
+  async function verifySig() {
+    var sig = payload.sig;
+    if (!sig) return null;
+    var s = subtle();
+    try {
+      var probe = await s.generateKey({ name: "Ed25519" }, false, ["sign", "verify"]);
+      if (!probe) return "na";
+    } catch (e) { return "na"; }
+    try {
+      var pub = await s.importKey("raw", b64ToBytes(sig.pub), { name: "Ed25519" }, false, ["verify"]);
+      var ok = await s.verify({ name: "Ed25519" }, pub, b64ToBytes(sig.val), b64ToBytes(payload.ct));
+      return ok ? "ok" : "bad";
+    } catch (e) { return "bad"; }
+  }
+
+  /* ---- view-limit storage (IndexedDB, localStorage fallback) ---- */
+  var burnKey = "lockhtml_v2_" + payload.id;
+  function idb() {
+    return new Promise(function (res, rej) {
+      try {
+        var r = indexedDB.open("lockhtml", 1);
+        r.onupgradeneeded = function () { r.result.createObjectStore("views"); };
+        r.onsuccess = function () { res(r.result); };
+        r.onerror = function () { rej(r.error); };
+      } catch (e) { rej(e); }
+    });
+  }
+  async function getViews() {
+    try {
+      var db = await idb();
+      return await new Promise(function (res, rej) {
+        var q = db.transaction("views", "readonly").objectStore("views").get(burnKey);
+        q.onsuccess = function () { res(q.result || 0); };
+        q.onerror = function () { rej(q.error); };
+      });
+    } catch (e) {
+      try { return parseInt(localStorage.getItem(burnKey) || "0", 10); } catch (_) { return 0; }
+    }
+  }
+  async function bumpViews() {
+    var n = (await getViews()) + 1;
+    try {
+      var db = await idb();
+      await new Promise(function (res, rej) {
+        var q = db.transaction("views", "readwrite").objectStore("views").put(n, burnKey);
+        q.onsuccess = function () { res(); }; q.onerror = function () { rej(q.error); };
+      });
+    } catch (e) { try { localStorage.setItem(burnKey, String(n)); } catch (_) {} }
+    return n;
+  }
+
+  function expiredState() {
+    var now = Date.now();
+    if (payload.notbefore && now < Date.parse(payload.notbefore)) return "early";
+    if (payload.expires && now > Date.parse(payload.expires)) return "expired";
+    return null;
+  }
+
+  function showBlocked(kind) {
+    $("lockIcon").innerHTML = "&#128465;";
+    if (kind === "early") { setText("gateTitle", T.early); setText("gateSub", T.earlySub); }
+    else { setText("gateTitle", T.expired); setText("gateSub", T.expiredSub); }
+    $("pin").classList.add("hidden");
+    $("kfRow").classList.add("hidden");
+    $("unlock").classList.add("hidden");
+    $("msg").textContent = ""; 
+  }
+
+  function renderHtml(html) {
+    $("viewer").srcdoc = html;
+    $("dlwrap").classList.add("hidden");
+    $("stage").classList.remove("hidden");
+    $("gate").classList.add("hidden");
+  }
+  function renderFile(buf, name) {
+    var blob = new Blob([buf], { type: "application/octet-stream" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = name || "document.bin"; a.id = "dlAnchor";
+    document.body.appendChild(a);
+    setText("dlSub", name || "");
+    $("dlBtn").onclick = function () { a.click(); };
+    $("dlwrap").classList.remove("hidden");
+    $("stage").classList.remove("hidden");
+    $("gate").classList.add("hidden");
+    a.click();
+  }
+  function applyWatermark() {
+    if (!payload.watermark) return;
+    setText("wmText", payload.watermark);
+    $("wm").classList.remove("hidden");
+  }
+
+  async function readKeyfile() {
+    var inp = $("keyfile");
+    if (!payload.keyfile) return null;
+    if (!inp.files || !inp.files[0]) return null;
+    return new Uint8Array(await inp.files[0].arrayBuffer());
+  }
+
+  async function attempt() {
+    var pin = $("pin").value;
+    if (!pin) { $("msg").textContent = T.empty; $("msg").className = "msg err"; return; }
+    if (!subtle()) { $("msg").textContent = T.norender; $("msg").className = "msg err"; return; }
+    var keyfile = await readKeyfile();
+    if (payload.keyfile && !keyfile) { $("msg").textContent = T.noKeyfile; $("msg").className = "msg err"; return; }
+
+    var sigState = await verifySig();
+    if (sigState === "bad") {
+      $("msg").textContent = T.verifyBad; $("msg").className = "msg err";
+      return;
+    }
+
+    $("unlock").disabled = true;
+    $("msg").textContent = T.decrypting; $("msg").className = "msg";
+
+    var buf = null, usedDecoy = false;
+    try { buf = await decryptBlob(payload, pin, keyfile); }
+    catch (e) {
+      if (payload.decoy) {
+        try { buf = await decryptBlob(payload.decoy, pin, keyfile); usedDecoy = true; }
+        catch (e2) { buf = null; }
+      }
+    }
+    if (buf === null) {
+      $("unlock").disabled = false;
+      $("msg").textContent = T.wrong; $("msg").className = "msg err";
+      return;
+    }
+
+    if (!usedDecoy) await bumpViews();
+
+    if (sigState === "ok") { $("msg").textContent = T.verifyOk; $("msg").className = "msg ok"; }
+
+    var kind = usedDecoy ? "html" : (payload.kind || "html");
+    if (kind === "file") {
+      renderFile(buf, payload.name);
+    } else {
+      renderHtml(new TextDecoder().decode(buf));
+    }
+    applyWatermark();
+  }
+
+  $("unlock").addEventListener("click", attempt);
+  $("pin").addEventListener("keydown", function (e) { if (e.key === "Enter") attempt(); });
+
+  if (payload.keyfile) $("kfRow").classList.remove("hidden");
+  var meta = [];
+  if (payload.maxviews) meta.push(payload.maxviews === 1 ? T.onetime : ("Views: " + payload.maxviews));
+  if (payload.expires) meta.push("Expires " + payload.expires);
+  if (payload.sig) meta.push("Signed (Ed25519)");
+  setText("meta", meta.join("  \u00b7  "));
+
+  var block = expiredState();
+  if (block) { showBlocked(block); }
+  else {
+    getViews().then(function (n) {
+      if (payload.maxviews && n >= payload.maxviews) { showBlocked("expired"); }
+      else { $("pin").focus(); }
+    });
+  }
+
+  document.addEventListener("contextmenu", function (e) {
+    if (!$("stage").classList.contains("hidden")) e.preventDefault();
+  });
+  document.addEventListener("keydown", function (e) {
+    if ($("stage").classList.contains("hidden")) return;
+    var k = (e.key || "").toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && (k === "p" || k === "s" || k === "u")) e.preventDefault();
+  });
+})();
+</script>
+</body>
+</html>

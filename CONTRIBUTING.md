@@ -10,6 +10,7 @@ git clone https://github.com/drsamonline/lockhtml
 cd lockhtml
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
+npm install        # build tooling: minifier + Argon2 WASM
 ```
 
 ## Running the tests
@@ -18,17 +19,25 @@ pip install -e ".[dev]"
 make test        # or: python -m pytest
 ```
 
-## Regenerating the GUI
+## Regenerating the generated assets
 
-The GUI is generated — `lockhtml/gui/index.html` is built from
-`lockhtml/gui/app.html` plus the viewer template `lockhtml/templates/viewer.html`.
-If you edit either, rebuild:
+Three files are generated and must not be hand-edited:
+
+- `lockhtml/templates/viewer.html` and `lockhtml/templates/viewer-argon2.html` —
+  built from `lockhtml/templates/viewer.src.html`, with the Argon2id WASM inlined
+  into the second.
+- `lockhtml/gui/index.html` — built from `lockhtml/gui/app.html`, with both viewer
+  templates inlined.
+
+After editing `viewer.src.html` or `app.html`, rebuild and minify:
 
 ```bash
-make gui         # or: python tools/build_gui.py
+npm install
+make build       # python tools/build.py && node tools/minify.mjs
 ```
 
-Never hand-edit `lockhtml/gui/index.html`; edit `app.html` and rebuild.
+CI verifies the committed assets match the sources, so always run `make build`
+before committing.
 
 ## Project conventions
 

@@ -29,7 +29,7 @@ jobs:
         run: python -m pytest
 
   gui:
-    name: GUI build & cross-compat
+    name: GUI build, minify & cross-compat
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,13 +39,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Install package
-        run: pip install -e .
-      - name: Regenerate GUI and check it is up to date
+          cache: npm
+      - name: Install
         run: |
-          python tools/build_gui.py
-          git diff --exit-code -- lockhtml/gui/index.html \
-            || (echo "::error::lockhtml/gui/index.html is out of date — run 'make gui'"; exit 1)
+          pip install -e .
+          npm ci
+      - name: Rebuild and minify, then check the committed assets are current
+        run: |
+          python tools/build.py
+          node tools/minify.mjs
+          git diff --exit-code -- \
+            lockhtml/templates/viewer.html \
+            lockhtml/templates/viewer-argon2.html \
+            lockhtml/gui/index.html \
+            || (echo "::error::generated assets are out of date — run 'make build'"; exit 1)
       - name: Lock a file with the GUI code path
         run: node tools/check_gui_compat.mjs /tmp/gui_locked.html
       - name: Confirm the CLI can open a GUI-locked file

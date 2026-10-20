@@ -3,8 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="LockHTML - PIN-protect and one-time-view HTML files, entirely in your browser.">
-<title>LockHTML - Lock any HTML file behind a PIN</title>
+<meta name="description" content="LockHTML - PIN-protect and one-time-view HTML and other files, entirely in your browser.">
+<meta name="theme-color" content="#0b0d12">
+<link rel="manifest" href="manifest.webmanifest">
+<title>LockHTML - Lock any file behind a PIN</title>
 <style>
   :root {
     --bg: #0b0d12; --panel: #141822; --panel-2: #1b2130; --line: #262d3c;
@@ -21,180 +23,171 @@
   }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  .wrap { max-width: 880px; margin: 0 auto; padding: 40px 20px 80px; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 36px 20px 80px; }
 
-  header { text-align: center; margin-bottom: 28px; }
-  .logo {
-    display: inline-flex; align-items: center; gap: 10px;
-    font-size: 26px; font-weight: 700; letter-spacing: -.5px;
-  }
-  .logo .badge-lock {
-    width: 40px; height: 40px; display: grid; place-items: center; font-size: 22px;
-    background: linear-gradient(160deg, #2b3a63, #1a2136);
-    border: 1px solid var(--line); border-radius: 12px;
-  }
-  header p { color: var(--muted); margin: 10px auto 0; max-width: 620px; font-size: 15px; }
-  .navlinks { margin-top: 14px; font-size: 13px; color: var(--muted); }
-  .navlinks a { margin: 0 8px; }
+  header { text-align: center; margin-bottom: 24px; }
+  .logo { display: inline-flex; align-items: center; gap: 10px; font-size: 26px; font-weight: 700; letter-spacing: -.5px; }
+  .logo .badge-lock { width: 40px; height: 40px; display: grid; place-items: center;
+    background: linear-gradient(160deg, #2b3a63, #1a2136); border: 1px solid var(--line); border-radius: 12px; }
+  .logo .badge-lock svg { width: 22px; height: 22px; color: #a9bcff; }
+  header p { color: var(--muted); margin: 10px auto 0; max-width: 640px; font-size: 15px; }
+  .navlinks { margin-top: 14px; font-size: 13px; color: var(--muted); display: flex; gap: 14px; justify-content: center; align-items: center; flex-wrap: wrap; }
+  .pill { display: inline-block; padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px; font-size: 11px; color: var(--muted); }
+  select.lang { background: #0e1118; color: #fff; border: 1px solid #2c3340; border-radius: 8px; padding: 5px 8px; font-size: 12px; }
 
-  .tabs { display: flex; gap: 6px; justify-content: center; margin: 26px 0 18px; }
-  .tab {
-    padding: 9px 20px; border-radius: 10px; cursor: pointer; font-size: 14px;
-    font-weight: 600; color: var(--muted); border: 1px solid transparent;
-    background: transparent;
-  }
+  .tabs { display: flex; gap: 6px; justify-content: center; margin: 24px 0 18px; }
+  .tab { padding: 9px 20px; border-radius: 10px; cursor: pointer; font-size: 14px; font-weight: 600; color: var(--muted); border: 1px solid transparent; background: transparent; }
   .tab.active { color: #fff; background: var(--panel); border-color: var(--line); }
 
-  .panel { background: var(--panel); border: 1px solid var(--line);
-           border-radius: 18px; padding: 26px; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 26px; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
   .panel.hidden { display: none; }
 
-  .drop {
-    border: 2px dashed #2f3849; border-radius: 14px; padding: 34px 20px;
-    text-align: center; cursor: pointer; transition: border-color .15s, background .15s;
-    background: var(--panel-2);
-  }
+  .drop { border: 2px dashed #2f3849; border-radius: 14px; padding: 32px 20px; text-align: center; cursor: pointer; transition: border-color .15s, background .15s; background: var(--panel-2); }
   .drop:hover, .drop.over { border-color: var(--accent); background: #1a2233; }
-  .drop .big { font-size: 30px; }
+  .drop .big { color: #8fa4d6; line-height: 0; }
+  .drop .big svg { width: 42px; height: 42px; }
   .drop .t { font-weight: 600; margin-top: 6px; }
   .drop .s { color: var(--muted); font-size: 13px; margin-top: 4px; }
 
   .filelist { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
-  .fileitem {
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
-    padding: 10px 14px; font-size: 13px;
-  }
+  .fileitem { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; font-size: 13px; }
   .fileitem .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fileitem .sz { color: var(--muted); font-variant-numeric: tabular-nums; }
-  .fileitem button { background: none; border: 0; color: var(--muted); cursor: pointer;
-                     font-size: 16px; line-height: 1; padding: 2px 6px; }
+  .fileitem button { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 6px; }
   .fileitem button:hover { color: var(--err); }
 
-  label.fld { display: block; margin: 20px 0 8px; font-size: 13px; font-weight: 600; }
+  label.fld { display: block; margin: 18px 0 8px; font-size: 13px; font-weight: 600; }
   .pinrow { display: flex; gap: 8px; }
-  input[type=password], input[type=text] {
-    flex: 1; padding: 12px 14px; font-size: 16px; letter-spacing: 2px;
-    background: #0e1118; color: #fff; border: 1px solid #2c3340; border-radius: 10px;
-    outline: none; width: 100%;
-  }
-  input:focus { border-color: var(--accent); }
-  .toggle { background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
-            border-radius: 10px; padding: 0 14px; cursor: pointer; font-size: 13px; }
-  .toggle:hover { color: #fff; }
+  input[type=password], input[type=text], input[type=number], input[type=datetime-local], select {
+    flex: 1; padding: 12px 14px; font-size: 15px; background: #0e1118; color: #fff;
+    border: 1px solid #2c3340; border-radius: 10px; outline: none; width: 100%; }
+  input[type=password] { letter-spacing: 2px; }
+  input:focus, select:focus { border-color: var(--accent); }
+  .toggle, .mini { background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); border-radius: 10px; padding: 0 14px; cursor: pointer; font-size: 13px; white-space: nowrap; }
+  .mini { padding: 8px 12px; font-size: 12px; }
+  .toggle:hover, .mini:hover { color: #fff; border-color: var(--accent); }
   .strength { height: 6px; border-radius: 4px; background: #232a38; margin-top: 8px; overflow: hidden; }
   .strength > i { display: block; height: 100%; width: 0; transition: width .2s, background .2s; }
   .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
 
-  .opts { display: flex; align-items: center; gap: 10px; margin-top: 18px; }
+  .opts { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 18px; }
   .opts label { font-size: 14px; display: flex; align-items: center; gap: 8px; cursor: pointer; }
   input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--accent); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .grid2 label.fld { margin-top: 12px; }
 
-  .adv { margin-top: 14px; font-size: 13px; color: var(--muted); }
-  .adv summary { cursor: pointer; }
-  .adv select { margin-left: 8px; background: #0e1118; color: #fff;
-                border: 1px solid #2c3340; border-radius: 8px; padding: 6px 8px; }
+  details.adv { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; }
+  details.adv > summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+  .adv .inner { padding-top: 8px; }
+  .kfrow { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .kfrow .state { font-size: 12px; color: var(--ok); }
 
   .actions { margin-top: 22px; display: flex; gap: 10px; }
-  button.primary {
-    flex: 1; padding: 14px; font-size: 15px; font-weight: 700; color: #fff;
-    background: linear-gradient(180deg, var(--accent), var(--accent-2));
-    border: 0; border-radius: 12px; cursor: pointer;
-  }
+  button.primary { flex: 1; padding: 14px; font-size: 15px; font-weight: 700; color: #fff; background: linear-gradient(180deg, var(--accent), var(--accent-2)); border: 0; border-radius: 12px; cursor: pointer; }
   button.primary:hover { filter: brightness(1.08); }
   button.primary:disabled { opacity: .45; cursor: default; filter: none; }
-  button.ghost {
-    padding: 14px 18px; font-size: 14px; font-weight: 600; color: var(--txt);
-    background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; cursor: pointer;
-  }
+  button.ghost { padding: 14px 18px; font-size: 14px; font-weight: 600; color: var(--txt); background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; cursor: pointer; }
   button.ghost:hover { border-color: var(--accent); }
 
   .status { margin-top: 16px; font-size: 13px; min-height: 20px; }
-  .status.ok { color: var(--ok); }
-  .status.err { color: var(--err); }
-  .status.warn { color: var(--warn); }
-
+  .status.ok { color: var(--ok); } .status.err { color: var(--err); } .status.warn { color: var(--warn); }
   .results { margin-top: 18px; display: flex; flex-direction: column; gap: 10px; }
-  .result {
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    background: #12241a; border: 1px solid #1f3d2c; border-radius: 12px; padding: 12px 14px;
-    font-size: 13px;
-  }
-  .result .nm { font-weight: 600; }
-  .result a.dl { background: var(--ok); color: #05230f; padding: 7px 12px;
-                 border-radius: 8px; font-weight: 700; text-decoration: none; white-space: nowrap; }
+  .result { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #12241a; border: 1px solid #1f3d2c; border-radius: 12px; padding: 12px 14px; font-size: 13px; }
+  .result .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+  .result a.dl { background: var(--ok); color: #05230f; padding: 7px 12px; border-radius: 8px; font-weight: 700; text-decoration: none; white-space: nowrap; }
   .result a.dl:hover { filter: brightness(1.08); text-decoration: none; }
-
   .preview { margin-top: 16px; }
-  .preview iframe { width: 100%; height: 420px; border: 1px solid var(--line);
-                    border-radius: 12px; background: #fff; }
+  .preview iframe { width: 100%; height: 400px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
 
   footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 40px; line-height: 1.8; }
-  .pill { display: inline-block; padding: 2px 9px; border: 1px solid var(--line);
-          border-radius: 999px; font-size: 11px; color: var(--muted); margin: 0 3px; }
-  .note { background: #1a1a10; border: 1px solid #3d3a1f; color: #e8dfa8;
-          border-radius: 10px; padding: 12px 14px; font-size: 12.5px; margin-top: 18px; }
-
-  svg.ico { display: inline-block; vertical-align: middle; }
-  .logo .badge-lock svg { width: 22px; height: 22px; color: #a9bcff; }
-  .drop .big { color: #8fa4d6; line-height: 0; }
-  .drop .big svg { width: 42px; height: 42px; }
+  .note { background: #1a1a10; border: 1px solid #3d3a1f; color: #e8dfa8; border-radius: 10px; padding: 12px 14px; font-size: 12.5px; margin-top: 18px; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <div class="logo"><span class="badge-lock"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2.5"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span> LockHTML</div>
-    <p>Turn any HTML file into a PIN-protected document &mdash; optionally viewable only once.
-       Everything happens locally in your browser; nothing is uploaded.</p>
+    <div class="logo"><span class="badge-lock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2.5"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span> LockHTML</div>
+    <p data-i18n="tagline">Turn any file into a PIN-protected document — optionally viewable only once. Everything happens locally in your browser; nothing is uploaded.</p>
     <div class="navlinks">
-      <a href="https://github.com/drsamonline/lockhtml" target="_blank" rel="noopener">GitHub</a> &middot;
-      <a href="https://github.com/drsamonline/lockhtml#readme" target="_blank" rel="noopener">Docs</a> &middot;
-      <span class="pill">AES-256-GCM</span><span class="pill">PBKDF2-SHA256</span><span class="pill">100% offline</span>
+      <a href="https://github.com/drsamonline/lockhtml" target="_blank" rel="noopener">GitHub</a>
+      <span class="pill">AES-256-GCM</span><span class="pill">Argon2id</span><span class="pill" data-i18n="pillOffline">100% offline</span>
+      <select class="lang" id="lang" aria-label="Language">
+        <option value="en">English</option>
+        <option value="hi">हिन्दी</option>
+        <option value="gu">ગુજરાતી</option>
+      </select>
     </div>
   </header>
 
   <div class="tabs">
-    <button class="tab active" id="tabLock" data-tab="lock">Lock</button>
-    <button class="tab" id="tabUnlock" data-tab="unlock">Unlock / Verify</button>
+    <button class="tab active" id="tabLock" data-tab="lock" data-i18n="tabLock">Lock</button>
+    <button class="tab" id="tabUnlock" data-tab="unlock" data-i18n="tabUnlock">Unlock / Verify</button>
   </div>
 
   <!-- LOCK -->
   <section class="panel" id="panelLock">
     <div class="drop" id="dropLock">
-      <div class="big"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
-      <div class="t">Drop HTML file(s) here</div>
-      <div class="s">or click to choose &mdash; .html / .htm</div>
-      <input type="file" id="fileLock" accept=".html,.htm,text/html" multiple hidden>
+      <div class="big"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
+      <div class="t" data-i18n="dropTitle">Drop file(s) here</div>
+      <div class="s" data-i18n="dropSub">or click to choose — any file type</div>
+      <input type="file" id="fileLock" multiple hidden>
     </div>
     <div class="filelist" id="listLock"></div>
 
-    <label class="fld" for="pinLock">Secret PIN</label>
+    <label class="fld" for="pinLock" data-i18n="pinLabel">Secret PIN or passphrase</label>
     <div class="pinrow">
-      <input type="password" id="pinLock" inputmode="numeric" autocomplete="new-password" placeholder="Enter a PIN">
-      <button class="toggle" id="togglePin" type="button">Show</button>
+      <input type="password" id="pinLock" autocomplete="new-password" placeholder="Enter a PIN">
+      <button class="toggle" id="togglePin" type="button" data-i18n="show">Show</button>
+      <button class="toggle" id="genPin" type="button" data-i18n="generate">Generate</button>
     </div>
     <div class="strength"><i id="strengthBar"></i></div>
-    <div class="hint" id="strengthText">The PIN cannot be recovered &mdash; if it is lost, the file cannot be opened.</div>
+    <div class="hint" id="strengthText" data-i18n="pinHint">The PIN cannot be recovered — if it is lost, the file cannot be opened.</div>
 
     <div class="opts">
-      <label><input type="checkbox" id="oneTime"> One-time view (expire after first open)</label>
+      <label><input type="checkbox" id="oneTime"> <span data-i18n="oneTime">One-time view</span></label>
+      <label><input type="checkbox" id="useKeyfile"> <span data-i18n="useKeyfile">Require a keyfile</span></label>
     </div>
 
     <details class="adv">
-      <summary>Advanced</summary>
-      <label>PBKDF2 iterations:
-        <select id="iterations">
-          <option value="100000">100,000 (fast)</option>
-          <option value="250000" selected>250,000 (recommended)</option>
-          <option value="600000">600,000 (strong)</option>
-        </select>
-      </label>
+      <summary data-i18n="advanced">Advanced options</summary>
+      <div class="inner">
+        <div class="grid2">
+          <div>
+            <label class="fld" for="kdf" data-i18n="kdf">Key derivation</label>
+            <select id="kdf">
+              <option value="argon2id">Argon2id (recommended)</option>
+              <option value="pbkdf2">PBKDF2-SHA256 (smaller file)</option>
+            </select>
+          </div>
+          <div>
+            <label class="fld" for="maxViews" data-i18n="maxViews">Max views (blank = unlimited)</label>
+            <input type="number" id="maxViews" min="1" placeholder="e.g. 1">
+          </div>
+          <div>
+            <label class="fld" for="notBefore" data-i18n="notBefore">Do not open before</label>
+            <input type="datetime-local" id="notBefore">
+          </div>
+          <div>
+            <label class="fld" for="expires" data-i18n="expires">Expires after</label>
+            <input type="datetime-local" id="expires">
+          </div>
+        </div>
+        <label class="fld" for="watermark" data-i18n="watermark">Watermark text (shown over the document)</label>
+        <input type="text" id="watermark" placeholder="e.g. Confidential — for A. Sharma only">
+        <div class="kfrow">
+          <button class="mini" id="genKeyfile" type="button" data-i18n="genKeyfile">Generate keyfile</button>
+          <button class="mini" id="pickKeyfile" type="button" data-i18n="pickKeyfile">Use existing keyfile</button>
+          <span class="state" id="kfState"></span>
+          <input type="file" id="keyfileInput" hidden>
+        </div>
+        <label class="fld" for="decoyPin" data-i18n="decoyPin">Duress PIN (opens a harmless decoy page)</label>
+        <input type="password" id="decoyPin" placeholder="optional">
+      </div>
     </details>
 
     <div class="actions">
-      <button class="primary" id="lockBtn" disabled>Lock files</button>
-      <button class="ghost" id="clearBtn" type="button">Clear</button>
+      <button class="primary" id="lockBtn" disabled data-i18n="lockBtn">Lock files</button>
+      <button class="ghost" id="clearBtn" type="button" data-i18n="clear">Clear</button>
     </div>
     <div class="status" id="statusLock"></div>
     <div class="results" id="resultsLock"></div>
@@ -203,95 +196,170 @@
   <!-- UNLOCK -->
   <section class="panel hidden" id="panelUnlock">
     <div class="drop" id="dropUnlock">
-      <div class="big"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2.5"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg></div>
-      <div class="t">Drop a locked .html file here</div>
-      <div class="s">or click to choose</div>
-      <input type="file" id="fileUnlock" accept=".html,.htm,text/html" hidden>
+      <div class="big"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2.5"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg></div>
+      <div class="t" data-i18n="dropUnlockTitle">Drop a locked .html file here</div>
+      <div class="s" data-i18n="dropSub">or click to choose — any file type</div>
+      <input type="file" id="fileUnlock" hidden>
     </div>
     <div class="filelist" id="listUnlock"></div>
 
-    <label class="fld" for="pinUnlock">PIN</label>
-    <div class="pinrow">
-      <input type="password" id="pinUnlock" autocomplete="off" placeholder="Enter the PIN">
+    <label class="fld" for="pinUnlock" data-i18n="pinShort">PIN</label>
+    <input type="password" id="pinUnlock" autocomplete="off" placeholder="Enter the PIN">
+    <div class="kfrow" id="kfUnlockRow" style="display:none">
+      <span class="state" style="color:var(--warn)" data-i18n="keyfileNeeded">This file needs its keyfile:</span>
+      <input type="file" id="keyfileUnlock">
     </div>
 
     <div class="actions">
-      <button class="primary" id="unlockBtn" disabled>Unlock</button>
-      <button class="ghost" id="dlPlain" type="button" disabled>Download decrypted</button>
+      <button class="primary" id="unlockBtn" disabled data-i18n="unlockBtn">Unlock</button>
+      <button class="ghost" id="dlPlain" type="button" disabled data-i18n="downloadPlain">Download decrypted</button>
     </div>
     <div class="status" id="statusUnlock"></div>
     <div class="preview" id="preview"></div>
   </section>
 
-  <div class="note">
-    <strong>Security note:</strong> the PIN provides real encryption &mdash; without it the file is
-    unreadable even if the source is inspected. "One-time view" is a browser-enforced deterrent,
-    not a server guarantee: a recipient can still copy the file or screenshot the decrypted page.
+  <div class="note" data-i18n="secNote">
+    <strong>Security note:</strong> the PIN provides real encryption — without it the file is unreadable even if the source is inspected. "One-time view" is a browser-enforced deterrent, not a server guarantee: a recipient can still copy the file or screenshot the decrypted page.
   </div>
 
   <footer>
-    LockHTML &middot; MIT License &middot; built for the web, runs on any OS<br>
-    CLI: <code>pip install lockhtml</code> then <code>lockhtml lock file.html --pin 1234</code>
+    LockHTML &middot; MIT License &middot; <span data-i18n="footerRuns">runs on any OS</span><br>
+    CLI: <code>pip install lockhtml</code> &middot; <code>lockhtml lock file.html --pin 1234</code>
   </footer>
 </div>
 
+<!--__ARGON2__-->
 <script>
 "use strict";
-/* The viewer template is injected here at build time by tools/build_gui.py. */
 const VIEWER_TEMPLATE = "__VIEWER_TEMPLATE__";
+const VIEWER_TEMPLATE_ARGON2 = "__VIEWER_TEMPLATE_ARGON2__";
 
 const $ = (id) => document.getElementById(id);
 const enc = new TextEncoder();
 const dec = new TextDecoder();
+const ARGON2_PARAMS = { m: 19456, t: 2, p: 1 };
+const PBKDF2_ITER = 250000;
+
+/* ---------- i18n ---------- */
+const STRINGS = {
+  en: {}, // English is the markup default
+  hi: {
+    tagline: "\u0915\u093f\u0938\u0940 \u092d\u0940 \u092b\u093c\u093e\u0907\u0932 \u0915\u094b PIN-\u0938\u0941\u0930\u0915\u094d\u0937\u093f\u0924 \u0926\u0938\u094d\u0924\u093e\u0935\u0947\u091c\u093c \u092c\u0928\u093e\u090f\u0902\u0964 \u0938\u092c \u0915\u0941\u091b \u0906\u092a\u0915\u0947 \u092c\u094d\u0930\u093e\u0909\u091c\u093c\u0930 \u092e\u0947\u0902 \u0939\u094b\u0924\u093e \u0939\u0948\u0964",
+    pillOffline: "100% \u0911\u092b\u0932\u093e\u0907\u0928", tabLock: "\u0932\u0949\u0915 \u0915\u0930\u0947\u0902", tabUnlock: "\u0916\u094b\u0932\u0947\u0902 / \u091c\u093e\u0902\u091a\u0947\u0902",
+    dropTitle: "\u092b\u093c\u093e\u0907\u0932(\u0947\u0902) \u092f\u0939\u093e\u0901 \u091b\u094b\u0921\u093c\u0947\u0902", dropSub: "\u092f\u093e \u091a\u0941\u0928\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f \u0915\u094d\u0932\u093f\u0915 \u0915\u0930\u0947\u0902 \u2014 \u0915\u094b\u0908 \u092d\u0940 \u092a\u094d\u0930\u0915\u093e\u0930",
+    pinLabel: "\u0917\u0941\u092a\u094d\u0924 PIN \u092f\u093e \u092a\u093e\u0938\u0935\u0930\u094d\u0921", show: "\u0926\u093f\u0916\u093e\u090f\u0901", generate: "\u092c\u0928\u093e\u090f\u0901",
+    pinHint: "PIN \u092a\u0941\u0928\u0903 \u092a\u094d\u0930\u093e\u092a\u094d\u0924 \u0928\u0939\u0940\u0902 \u0939\u094b \u0938\u0915\u0924\u093e\u0964",
+    oneTime: "\u090f\u0915-\u092c\u093e\u0930 \u0926\u0947\u0916\u0947\u0902", useKeyfile: "\u0915\u0940\u092b\u093c\u093e\u0907\u0932 \u0906\u0935\u0936\u094d\u092f\u0915", advanced: "\u0909\u0928\u094d\u0928\u0924 \u0935\u093f\u0915\u0932\u094d\u092a",
+    kdf: "\u0915\u0941\u0902\u091c\u0940 \u0935\u094d\u092f\u0941\u0924\u094d\u092a\u0924\u094d\u0924\u093f", maxViews: "\u0905\u0927\u093f\u0915\u0924\u092e \u092c\u093e\u0930", notBefore: "\u0907\u0938\u0938\u0947 \u092a\u0939\u0932\u0947 \u0928 \u0916\u094b\u0932\u0947\u0902", expires: "\u0907\u0938\u0915\u0947 \u092c\u093e\u0926 \u0938\u092e\u093e\u092a\u094d\u0924",
+    watermark: "\u0935\u093e\u091f\u0930\u092e\u093e\u0930\u094d\u0915 \u091f\u0947\u0915\u094d\u0938\u094d\u091f", genKeyfile: "\u0915\u0940\u092b\u093c\u093e\u0907\u0932 \u092c\u0928\u093e\u090f\u0901", pickKeyfile: "\u092e\u094c\u091c\u0942\u0926\u093e \u0915\u0940\u092b\u093c\u093e\u0907\u0932", decoyPin: "\u0926\u092c\u093e\u0935 PIN (\u0928\u093f\u0930\u094d\u0926\u094b\u0937 \u092a\u0943\u0937\u094d\u0920 \u0916\u094b\u0932\u0947\u0917\u093e)",
+    lockBtn: "\u092b\u093c\u093e\u0907\u0932\u0947\u0902 \u0932\u0949\u0915 \u0915\u0930\u0947\u0902", clear: "\u0938\u093e\u092b\u093c \u0915\u0930\u0947\u0902", dropUnlockTitle: "\u0932\u0949\u0915 \u0915\u0940 \u0917\u0908 \u092b\u093c\u093e\u0907\u0932 \u092f\u0939\u093e\u0901 \u091b\u094b\u0921\u093c\u0947\u0902",
+    pinShort: "PIN", keyfileNeeded: "\u0907\u0938 \u092b\u093c\u093e\u0907\u0932 \u0915\u094b \u0915\u0940\u092b\u093c\u093e\u0907\u0932 \u091a\u093e\u0939\u093f\u090f:", unlockBtn: "\u0916\u094b\u0932\u0947\u0902", downloadPlain: "\u0921\u093f\u0915\u094d\u0930\u093f\u092a\u094d\u091f \u0921\u093e\u0909\u0928\u0932\u094b\u0921",
+    secNote: "<strong>\u0938\u0941\u0930\u0915\u094d\u0937\u093e \u0938\u0942\u091a\u0928\u093e:</strong> PIN \u0935\u093e\u0938\u094d\u0924\u0935\u093f\u0915 \u090f\u0928\u094d\u0915\u094d\u0930\u093f\u092a\u094d\u0936\u0928 \u0926\u0947\u0924\u093e \u0939\u0948\u0964 \u201c\u090f\u0915-\u092c\u093e\u0930 \u0926\u0947\u0916\u0947\u0902\u201d \u0915\u0947\u0935\u0932 \u092c\u094d\u0930\u093e\u0909\u091c\u093c\u0930-\u0938\u094d\u0924\u0930\u0940\u092f \u0930\u094b\u0915 \u0939\u0948\u0964",
+    footerRuns: "\u0915\u093f\u0938\u0940 \u092d\u0940 OS \u092a\u0930 \u091a\u0932\u0924\u093e \u0939\u0948" },
+  gu: {
+    tagline: "\u0a95\u0acb\u0a88 \u0aaa\u0aa3 \u0aab\u0abe\u0a87\u0ab2\u0aa8\u0ac7 PIN-\u0ab8\u0ac1\u0ab0\u0a95\u0acd\u0ab7\u0abf\u0aa4 \u0aa6\u0ab8\u0acd\u0aa4\u0abe\u0ab5\u0ac7\u0a9c \u0aac\u0aa8\u0abe\u0ab5\u0acb. \u0aac\u0aa7\u0ac1\u0a82 \u0aa4\u0aae\u0abe\u0ab0\u0abe \u0aac\u0acd\u0ab0\u0abe\u0a89\u0a9d\u0ab0\u0aae\u0abe\u0a82 \u0aa5\u0abe\u0aaf \u0a9b\u0ac7.",
+    pillOffline: "100% \u0a93\u0aab\u0ab2\u0abe\u0a87\u0aa8", tabLock: "\u0ab2\u0ac9\u0a95 \u0a95\u0ab0\u0acb", tabUnlock: "\u0a96\u0acb\u0ab2\u0acb / \u0aa4\u0aaa\u0abe\u0ab8\u0acb",
+    dropTitle: "\u0aab\u0abe\u0a87\u0ab2 \u0a85\u0ab9\u0ac0\u0a82 \u0aae\u0ac2\u0a95\u0acb", dropSub: "\u0a85\u0aa5\u0ab5\u0abe \u0aaa\u0ab8\u0a82\u0aa6 \u0a95\u0ab0\u0ab5\u0abe \u0a95\u0acd\u0ab2\u0abf\u0a95 \u0a95\u0ab0\u0acb",
+    pinLabel: "\u0a97\u0ac1\u0aaa\u0acd\u0aa4 PIN \u0a85\u0aa5\u0ab5\u0abe \u0aaa\u0abe\u0ab8\u0ab5\u0ab0\u0acd\u0aa1", show: "\u0aac\u0aa4\u0abe\u0ab5\u0acb", generate: "\u0aac\u0aa8\u0abe\u0ab5\u0acb",
+    pinHint: "PIN \u0aaa\u0ac1\u0aa8\u0a83 \u0aae\u0ac7\u0ab3\u0ab5\u0abe\u0aaf \u0ab6\u0a95\u0abe\u0aaf \u0aa8\u0ab9\u0ac0\u0a82.",
+    oneTime: "\u0a8f\u0a95 \u0ab5\u0abe\u0ab0 \u0a9c\u0ac1\u0a93", useKeyfile: "\u0a95\u0ac0\u0aab\u0abe\u0a87\u0ab2 \u0a9c\u0ab0\u0ac2\u0ab0\u0ac0", advanced: "\u0a89\u0aa8\u0acd\u0aa8\u0aa4 \u0ab5\u0abf\u0a95\u0ab2\u0acd\u0aaa",
+    kdf: "\u0a95\u0ac0 \u0a89\u0aa4\u0acd\u0aaa\u0aa4\u0acd\u0aa4\u0abf", maxViews: "\u0ab5\u0aa7\u0ac1 \u0ab5\u0abe\u0ab0", notBefore: "\u0a86 \u0aaa\u0ab9\u0ac7\u0ab2\u0abe\u0a82 \u0aa8\u0abe \u0a96\u0acb\u0ab2\u0ab5\u0ac1\u0a82", expires: "\u0a86 \u0aaa\u0a9b\u0ac0 \u0ab8\u0aae\u0abe\u0aaa\u0acd\u0aa4",
+    watermark: "\u0ab5\u0ac9\u0a9f\u0ab0\u0aae\u0abe\u0ab0\u0acd\u0a95 \u0a9f\u0ac7\u0a95\u0acd\u0ab8\u0acd\u0a9f", genKeyfile: "\u0a95\u0ac0\u0aab\u0abe\u0a87\u0ab2 \u0aac\u0aa8\u0abe\u0ab5\u0acb", pickKeyfile: "\u0ab9\u0abe\u0ab2\u0aa8\u0ac1\u0a82 \u0a95\u0ac0\u0aab\u0abe\u0a87\u0ab2", decoyPin: "\u0aa6\u0aac\u0abe\u0ab5 PIN (\u0aa8\u0abf\u0ab0\u0acd\u0aa6\u0acb\u0ab7 \u0aaa\u0abe\u0aa8\u0ac1\u0a82 \u0a96\u0acb\u0ab2\u0ab6\u0ac7)",
+    lockBtn: "\u0aab\u0abe\u0a87\u0ab2\u0acb \u0ab2\u0ac9\u0a95 \u0a95\u0ab0\u0acb", clear: "\u0ab8\u0abe\u0aab \u0a95\u0ab0\u0acb", dropUnlockTitle: "\u0ab2\u0ac9\u0a95 \u0a95\u0ab0\u0ac7\u0ab2 \u0aab\u0abe\u0a87\u0ab2 \u0a85\u0ab9\u0ac0\u0a82 \u0aae\u0ac2\u0a95\u0acb",
+    pinShort: "PIN", keyfileNeeded: "\u0a86 \u0aab\u0abe\u0a87\u0ab2\u0aa8\u0ac7 \u0a95\u0ac0\u0aab\u0abe\u0a87\u0ab2 \u0a9c\u0acb\u0a88\u0a8f:", unlockBtn: "\u0a96\u0acb\u0ab2\u0acb", downloadPlain: "\u0aa1\u0abf\u0a95\u0acd\u0ab0\u0abf\u0aaa\u0acd\u0a9f \u0aa1\u0abe\u0a89\u0aa8\u0ab2\u0acb\u0aa1",
+    secNote: "<strong>\u0ab8\u0ac1\u0ab0\u0a95\u0acd\u0ab7\u0abe \u0aa8\u0acb\u0a82\u0aa7:</strong> PIN \u0ab8\u0abe\u0a9a\u0ac1\u0a82 \u0a8f\u0aa8\u0acd\u0a95\u0acd\u0ab0\u0abf\u0aaa\u0acd\u0ab6\u0aa8 \u0a86\u0aaa\u0ac7 \u0a9b\u0ac7. \u201c\u0a8f\u0a95 \u0ab5\u0abe\u0ab0 \u0a9c\u0ac1\u0a93\u201d \u0aab\u0a95\u0acd\u0aa4 \u0aac\u0acd\u0ab0\u0abe\u0a89\u0a9d\u0ab0-\u0ab8\u0acd\u0aa4\u0ab0\u0ac0\u0aaf \u0ab0\u0acb\u0a95 \u0a9b\u0ac7.",
+    footerRuns: "\u0a95\u0acb\u0a88 \u0aaa\u0aa3 OS \u0aaa\u0ab0 \u0a9a\u0abe\u0ab2\u0ac7 \u0a9b\u0ac7" }
+};
+const DEFAULTS = {};
+document.querySelectorAll("[data-i18n]").forEach(el => { DEFAULTS[el.dataset.i18n] = el.innerHTML; });
+function applyLang(lang) {
+  const table = STRINGS[lang] || {};
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    const key = el.dataset.i18n;
+    el.innerHTML = (table[key] !== undefined) ? table[key] : DEFAULTS[key];
+  });
+  document.documentElement.lang = lang;
+  try { localStorage.setItem("lockhtml_lang", lang); } catch (e) {}
+}
+$("lang").value = (function () { try { return localStorage.getItem("lockhtml_lang"); } catch (e) { return null; } })()
+  || ((navigator.language || "en").slice(0, 2)) || "en";
+if (!$("lang").value) $("lang").value = "en";
+applyLang($("lang").value);
+$("lang").addEventListener("change", () => applyLang($("lang").value));
 
 /* ---------- crypto helpers ---------- */
-function bytesToB64(bytes) {
-  let bin = "";
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin);
+function bytesToB64(bytes) { let bin = ""; for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]); return btoa(bin); }
+function b64ToBytes(s) { const bin = atob(s), out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; }
+function hex(b) { return Array.from(b).map(x => x.toString(16).padStart(2, "0")).join(""); }
+
+async function hmac256(keyBytes, data) {
+  const s = crypto.subtle;
+  const k = await s.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return new Uint8Array(await s.sign("HMAC", k, data));
 }
-function b64ToBytes(s) {
-  const bin = atob(s), out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
+async function rawKey(pin, salt, kdf, kdfparams, keyfile) {
+  const s = crypto.subtle;
+  let raw;
+  if (kdf === "argon2id") {
+    if (typeof argon2 === "undefined") throw new Error("Argon2 unavailable");
+    const h = await argon2.hash({
+      pass: pin, salt: salt, time: kdfparams.t, mem: kdfparams.m, parallelism: kdfparams.p,
+      hashLen: 32, type: argon2.ArgonType.Argon2id
+    });
+    raw = new Uint8Array(h.hash);
+  } else {
+    const base = await s.importKey("raw", enc.encode(pin), "PBKDF2", false, ["deriveBits"]);
+    raw = new Uint8Array(await s.deriveBits(
+      { name: "PBKDF2", salt, iterations: kdfparams.iter, hash: "SHA-256" }, base, 256));
+  }
+  if (keyfile && keyfile.length) raw = await hmac256(raw, keyfile);
+  return raw;
 }
-function hex(bytes) {
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+async function deriveAesKey(pin, salt, kdf, kdfparams, keyfile, usage) {
+  const raw = await rawKey(pin, salt, kdf, kdfparams, keyfile);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, usage);
 }
-async function deriveKey(pin, salt, iterations, usage) {
-  const base = await crypto.subtle.importKey(
-    "raw", enc.encode(pin), "PBKDF2", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
-    base, { name: "AES-GCM", length: 256 }, false, usage);
-}
-async function makePayload(text, pin, oneTime, iterations) {
+
+async function makeBlob(data, pin, kdf, kdfparams, keyfile, usage) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveKey(pin, salt, iterations, ["encrypt"]);
-  const ct = new Uint8Array(await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv }, key, enc.encode(text)));
-  const id = hex(new Uint8Array(await crypto.subtle.digest("SHA-256", ct)).slice(0, 8));
-  return { v: 1, kdf: "PBKDF2-SHA256", iter: iterations,
-           salt: bytesToB64(salt), iv: bytesToB64(iv), ct: bytesToB64(ct),
-           id, onetime: !!oneTime };
+  const key = await deriveAesKey(pin, salt, kdf, kdfparams, keyfile, usage);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data));
+  return { salt: bytesToB64(salt), iv: bytesToB64(iv), ct: bytesToB64(ct), _ct: ct };
 }
-async function decryptPayload(payload, pin) {
-  const salt = b64ToBytes(payload.salt), iv = b64ToBytes(payload.iv);
-  const key = await deriveKey(pin, salt, payload.iter || 250000, ["decrypt"]);
-  const buf = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, b64ToBytes(payload.ct));
-  return dec.decode(buf);
+
+async function makePayload(bytes, opts) {
+  const kdfparams = opts.kdf === "argon2id" ? { ...ARGON2_PARAMS } : { iter: PBKDF2_ITER };
+  const blob = await makeBlob(bytes, opts.pin, opts.kdf, kdfparams, opts.keyfile, ["encrypt"]);
+  const id = hex(await sha256head(blob._ct));
+  const payload = {
+    v: 2, kind: opts.kind, name: opts.name || null, kdf: opts.kdf, kdfparams,
+    salt: blob.salt, iv: blob.iv, ct: blob.ct, id,
+    onetime: !!(opts.oneTime || opts.maxViews === 1), maxviews: opts.maxViews || null,
+    notbefore: opts.notBefore || null, expires: opts.expires || null,
+    watermark: opts.watermark || null, keyfile: !!opts.keyfile,
+    sig: null, decoy: null
+  };
+  if (opts.decoyPin) {
+    const d = await makeBlob(enc.encode(DECOY_HTML), opts.decoyPin, opts.kdf, kdfparams, opts.keyfile, ["encrypt"]);
+    payload.decoy = { kdf: opts.kdf, kdfparams, salt: d.salt, iv: d.iv, ct: d.ct };
+  }
+  return payload;
 }
-function lockedName(name) {
-  return name.replace(/\.html?$/i, "") + ".locked.html";
+async function sha256head(bytes) {
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)).slice(0, 8);
 }
-function download(filename, text) {
-  const blob = new Blob([text], { type: "text/html" });
+const DECOY_HTML = "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Document</title></head>" +
+  "<body style='font-family:system-ui;max-width:640px;margin:60px auto;color:#222'>" +
+  "<h2>No content</h2><p>This document contains nothing further.</p></body></html>";
+
+function lockedName(name) { return name.replace(/\.html?$/i, "") + ".locked.html"; }
+function download(filename, data, mime) {
+  const blob = new Blob([data], { type: mime || "text/html" });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = filename;
+  const a = document.createElement("a"); a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  setTimeout(() => URL.revokeObjectURL(url), 6000);
 }
 function extractPayload(html) {
   const m = html.match(/<script id="payload" type="application\/json">([\s\S]*?)<\/script>/);
@@ -312,165 +380,188 @@ function wireDrop(dropId, inputId, onFiles) {
   const drop = $(dropId), input = $(inputId);
   drop.addEventListener("click", () => input.click());
   input.addEventListener("change", () => onFiles([...input.files]));
-  ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => {
-    e.preventDefault(); drop.classList.add("over");
-  }));
-  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => {
-    e.preventDefault(); drop.classList.remove("over");
-  }));
+  ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
   drop.addEventListener("drop", e => onFiles([...e.dataTransfer.files]));
 }
 
 /* ---------- LOCK ---------- */
 let lockFiles = [];
+let keyfileBytes = null;
 function renderLockList() {
-  const box = $("listLock");
-  box.innerHTML = "";
+  const box = $("listLock"); box.innerHTML = "";
   lockFiles.forEach((f, i) => {
-    const el = document.createElement("div");
-    el.className = "fileitem";
-    el.innerHTML = `<span class="nm">${f.name}</span>
-                    <span class="sz">${(f.size/1024).toFixed(1)} KB</span>`;
-    const rm = document.createElement("button");
-    rm.textContent = "\u00d7";
-    rm.title = "Remove";
+    const el = document.createElement("div"); el.className = "fileitem";
+    el.innerHTML = `<span class="nm">${f.name}</span><span class="sz">${(f.size / 1024).toFixed(1)} KB</span>`;
+    const rm = document.createElement("button"); rm.textContent = "\u00d7"; rm.title = "Remove";
     rm.addEventListener("click", () => { lockFiles.splice(i, 1); renderLockList(); });
-    el.appendChild(rm);
-    box.appendChild(el);
+    el.appendChild(rm); box.appendChild(el);
   });
   $("lockBtn").disabled = lockFiles.length === 0 || !$("pinLock").value;
 }
 wireDrop("dropLock", "fileLock", files => {
-  for (const f of files) {
-    if (!/\.html?$/i.test(f.name)) continue;
-    if (!lockFiles.some(x => x.name === f.name && x.size === f.size)) lockFiles.push(f);
-  }
+  for (const f of files) if (!lockFiles.some(x => x.name === f.name && x.size === f.size)) lockFiles.push(f);
   renderLockList();
 });
 
 function scorePin(pin) {
   let s = 0;
-  if (pin.length >= 4) s++;
-  if (pin.length >= 8) s++;
+  if (pin.length >= 4) s++; if (pin.length >= 8) s++;
   if (/[a-z]/.test(pin) && /[A-Z]/.test(pin)) s++;
-  if (/\d/.test(pin)) s++;
-  if (/[^A-Za-z0-9]/.test(pin)) s++;
+  if (/\d/.test(pin)) s++; if (/[^A-Za-z0-9]/.test(pin)) s++;
   return Math.min(s, 4);
 }
 $("pinLock").addEventListener("input", () => {
-  const pin = $("pinLock").value;
-  const s = scorePin(pin);
-  const bar = $("strengthBar");
+  const pin = $("pinLock").value, s = scorePin(pin), bar = $("strengthBar");
   const colors = ["#ff6b6b", "#ffb454", "#ffd166", "#33d17a", "#33d17a"];
   const widths = ["15%", "35%", "60%", "85%", "100%"];
   const labels = ["Very weak", "Weak", "Fair", "Strong", "Very strong"];
-  bar.style.width = pin ? widths[s] : "0";
-  bar.style.background = colors[s];
-  $("strengthText").textContent = pin
-    ? `PIN strength: ${labels[s]}`
-    : "The PIN cannot be recovered \u2014 if it is lost, the file cannot be opened.";
+  bar.style.width = pin ? widths[s] : "0"; bar.style.background = colors[s];
+  $("strengthText").textContent = pin ? `PIN strength: ${labels[s]}` : DEFAULTS.pinHint;
   renderLockList();
 });
 $("togglePin").addEventListener("click", () => {
-  const i = $("pinLock");
-  const show = i.type === "password";
-  i.type = show ? "text" : "password";
-  $("togglePin").textContent = show ? "Hide" : "Show";
+  const i = $("pinLock"), show = i.type === "password";
+  i.type = show ? "text" : "password"; $("togglePin").textContent = show ? "Hide" : "Show";
+});
+$("genPin").addEventListener("click", () => {
+  const words = ["amber","basil","cedar","delta","ember","flint","grove","hazel","ivory","jade",
+    "kite","lunar","maple","noble","ocean","pearl","quartz","raven","solar","tiger",
+    "umber","violet","willow","xenon","yarrow","zephyr"];
+  const r = crypto.getRandomValues(new Uint32Array(4));
+  const phrase = [0,1,2,3].map(i => words[r[i] % words.length]).join("-") + "-" + (r[0] % 10000);
+  const i = $("pinLock"); i.type = "text"; i.value = phrase;
+  $("togglePin").textContent = "Hide"; i.dispatchEvent(new Event("input", { bubbles: true }));
+});
+$("genKeyfile").addEventListener("click", () => {
+  keyfileBytes = crypto.getRandomValues(new Uint8Array(32));
+  download("lockhtml.key", keyfileBytes, "application/octet-stream");
+  $("kfState").textContent = "generated (32 bytes) \u2014 saved to downloads";
+  $("useKeyfile").checked = true;
+});
+$("pickKeyfile").addEventListener("click", () => $("keyfileInput").click());
+$("keyfileInput").addEventListener("change", async () => {
+  const f = $("keyfileInput").files[0]; if (!f) return;
+  keyfileBytes = new Uint8Array(await f.arrayBuffer());
+  $("kfState").textContent = f.name + " (" + keyfileBytes.length + " bytes)";
+  $("useKeyfile").checked = true;
 });
 
 $("lockBtn").addEventListener("click", async () => {
   const pin = $("pinLock").value;
   if (!pin || lockFiles.length === 0) return;
-  const oneTime = $("oneTime").checked;
-  const iterations = parseInt($("iterations").value, 10);
-  const results = $("resultsLock");
-  results.innerHTML = "";
-  $("statusLock").className = "status";
-  $("statusLock").textContent = "Encrypting\u2026";
+  if ($("useKeyfile").checked && !keyfileBytes) {
+    $("statusLock").className = "status err";
+    $("statusLock").textContent = "Generate or choose a keyfile first.";
+    return;
+  }
+  const opts = {
+    pin, kdf: $("kdf").value, keyfile: $("useKeyfile").checked ? keyfileBytes : null,
+    oneTime: $("oneTime").checked,
+    maxViews: $("maxViews").value ? parseInt($("maxViews").value, 10) : null,
+    notBefore: $("notBefore").value ? new Date($("notBefore").value).toISOString() : null,
+    expires: $("expires").value ? new Date($("expires").value).toISOString() : null,
+    watermark: $("watermark").value || null,
+    decoyPin: $("decoyPin").value || null
+  };
+  const results = $("resultsLock"); results.innerHTML = "";
+  $("statusLock").className = "status"; $("statusLock").textContent = "Encrypting\u2026";
   $("lockBtn").disabled = true;
-
   let done = 0;
   for (const f of lockFiles) {
     try {
-      const text = await f.text();
-      const payload = await makePayload(text, pin, oneTime, iterations);
-      const locked = VIEWER_TEMPLATE.replace("__PAYLOAD__", JSON.stringify(payload));
+      const buf = new Uint8Array(await f.arrayBuffer());
+      const isHtml = /\.html?$/i.test(f.name);
+      const o = { ...opts, kind: isHtml ? "html" : "file", name: isHtml ? null : f.name };
+      const payload = await makePayload(buf, o);
+      const tpl = opts.kdf === "argon2id" ? VIEWER_TEMPLATE_ARGON2 : VIEWER_TEMPLATE;
+      const locked = tpl.replace("__PAYLOAD__", JSON.stringify(payload));
       const outName = lockedName(f.name);
       download(outName, locked);
-
-      const row = document.createElement("div");
-      row.className = "result";
-      row.innerHTML = `<span class="nm"><span style="color:var(--ok)">\u2714</span> ${outName}${oneTime ? " &middot; one-time" : ""}</span>`;
-      const a = document.createElement("a");
-      a.className = "dl"; a.textContent = "Download again";
-      const blob = new Blob([locked], { type: "text/html" });
-      a.href = URL.createObjectURL(blob); a.download = outName;
-      row.appendChild(a);
-      results.appendChild(row);
+      const row = document.createElement("div"); row.className = "result";
+      row.innerHTML = `<span class="nm"><span style="color:var(--ok)">\u2714</span> ${outName}</span>`;
+      const a = document.createElement("a"); a.className = "dl"; a.textContent = "Download again";
+      a.href = URL.createObjectURL(new Blob([locked], { type: "text/html" })); a.download = outName;
+      row.appendChild(a); results.appendChild(row);
       done++;
     } catch (e) {
-      const row = document.createElement("div");
-      row.className = "result";
+      const row = document.createElement("div"); row.className = "result";
       row.style.background = "#241212"; row.style.borderColor = "#3d1f1f";
       row.textContent = `\u2716 ${f.name}: ${e.message}`;
       results.appendChild(row);
     }
   }
   $("lockBtn").disabled = false;
-  if (done) {
-    $("statusLock").className = "status ok";
-    $("statusLock").textContent = `Locked ${done} file(s). Check your downloads.`;
-  }
+  if (done) { $("statusLock").className = "status ok"; $("statusLock").textContent = `Locked ${done} file(s). Check your downloads.`; }
 });
 $("clearBtn").addEventListener("click", () => {
-  lockFiles = []; renderLockList();
-  $("pinLock").value = ""; $("oneTime").checked = false;
+  lockFiles = []; keyfileBytes = null; renderLockList();
+  ["pinLock", "maxViews", "notBefore", "expires", "watermark", "decoyPin"].forEach(id => $(id).value = "");
+  $("oneTime").checked = false; $("useKeyfile").checked = false; $("kfState").textContent = "";
   $("resultsLock").innerHTML = ""; $("statusLock").textContent = "";
-  $("strengthBar").style.width = "0";
-  $("strengthText").textContent =
-    "The PIN cannot be recovered \u2014 if it is lost, the file cannot be opened.";
+  $("strengthBar").style.width = "0"; $("strengthText").textContent = DEFAULTS.pinHint;
 });
 
 /* ---------- UNLOCK ---------- */
-let unlockFile = null, plaintext = null;
+let unlockFile = null, plaintext = null, unlockBuf = null;
 wireDrop("dropUnlock", "fileUnlock", files => {
   if (!files.length) return;
   unlockFile = files[0];
-  $("listUnlock").innerHTML =
-    `<div class="fileitem"><span class="nm">${unlockFile.name}</span>
-     <span class="sz">${(unlockFile.size/1024).toFixed(1)} KB</span></div>`;
-  $("unlockBtn").disabled = false;
-  $("preview").innerHTML = ""; $("statusUnlock").textContent = "";
-  $("dlPlain").disabled = true; plaintext = null;
+  $("listUnlock").innerHTML = `<div class="fileitem"><span class="nm">${unlockFile.name}</span><span class="sz">${(unlockFile.size / 1024).toFixed(1)} KB</span></div>`;
+  $("unlockBtn").disabled = false; $("preview").innerHTML = ""; $("statusUnlock").textContent = "";
+  $("dlPlain").disabled = true; plaintext = null; unlockBuf = null;
 });
 $("unlockBtn").addEventListener("click", async () => {
   if (!unlockFile) return;
   const pin = $("pinUnlock").value;
-  $("statusUnlock").className = "status";
-  $("statusUnlock").textContent = "Decrypting\u2026";
+  $("statusUnlock").className = "status"; $("statusUnlock").textContent = "Decrypting\u2026";
   try {
     const html = await unlockFile.text();
     const payload = extractPayload(html);
-    plaintext = await decryptPayload(payload, pin);
+    if (payload.keyfile) $("kfUnlockRow").style.display = "flex";
+    let keyfile = null;
+    if (payload.keyfile) {
+      const kf = $("keyfileUnlock").files[0];
+      if (!kf) { $("statusUnlock").className = "status err"; $("statusUnlock").textContent = "This file needs its keyfile."; return; }
+      keyfile = new Uint8Array(await kf.arrayBuffer());
+    }
+    const kdf = payload.kdf || "PBKDF2-SHA256";
+    const kdfparams = payload.kdfparams || (payload.iter ? { iter: payload.iter } : { iter: PBKDF2_ITER });
+    const key = await deriveAesKey(pin, b64ToBytes(payload.salt), kdf, kdfparams, keyfile, ["decrypt"]);
+    const buf = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64ToBytes(payload.iv) }, key, b64ToBytes(payload.ct));
+    unlockBuf = new Uint8Array(buf);
     $("statusUnlock").className = "status ok";
-    $("statusUnlock").textContent =
-      "Unlocked." + (payload.onetime ? " (This file was marked one-time.)" : "");
-    const iframe = document.createElement("iframe");
-    iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups");
-    iframe.srcdoc = plaintext;
-    $("preview").innerHTML = ""; $("preview").appendChild(iframe);
+    $("statusUnlock").textContent = "Unlocked." + (payload.onetime ? " (one-time)" : "");
+    if ((payload.kind || "html") === "file") {
+      $("preview").innerHTML = "";
+      $("dlPlain").textContent = "Download " + (payload.name || "file");
+    } else {
+      plaintext = dec.decode(unlockBuf);
+      const iframe = document.createElement("iframe");
+      iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups");
+      iframe.srcdoc = plaintext;
+      $("preview").innerHTML = ""; $("preview").appendChild(iframe);
+      $("dlPlain").textContent = DEFAULTS.downloadPlain || "Download decrypted";
+    }
     $("dlPlain").disabled = false;
   } catch (e) {
     $("statusUnlock").className = "status err";
-    $("statusUnlock").textContent = "Wrong PIN, or not a LockHTML file.";
+    $("statusUnlock").textContent = "Wrong PIN, missing keyfile, or not a LockHTML file.";
     $("preview").innerHTML = ""; $("dlPlain").disabled = true;
   }
 });
-$("dlPlain").addEventListener("click", () => {
-  if (plaintext == null) return;
-  const name = (unlockFile.name.replace(/\.locked\.html?$/i, "") || "document") + ".html";
-  download(name, plaintext);
+$("dlPlain").addEventListener("click", async () => {
+  if (unlockBuf == null) return;
+  const html = await unlockFile.text();
+  const payload = extractPayload(html);
+  if ((payload.kind || "html") === "file") download(payload.name || "document.bin", unlockBuf, "application/octet-stream");
+  else download((unlockFile.name.replace(/\.locked\.html?$/i, "") || "document") + ".html", dec.decode(unlockBuf));
 });
+
+/* ---------- PWA ---------- */
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
 </script>
 </body>
 </html>

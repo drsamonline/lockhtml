@@ -1,0 +1,14 @@
+{
+  "name": "lockhtml-dev",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Build tooling for LockHTML: GUI minification and the Argon2id WASM runtime.",
+  "license": "MIT",
+  "scripts": {
+    "minify": "node tools/minify.mjs"
+  },
+  "devDependencies": {
+    "argon2-browser": "^1.18.0",
+    "html-minifier-terser": "^7.2.0"
+  }
+}

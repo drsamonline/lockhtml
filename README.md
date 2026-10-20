@@ -2,17 +2,19 @@
 
 # 🔒 LockHTML
 
-**Turn any HTML file into a PIN-protected document — optionally viewable only once.**
+**Turn any file into a PIN-protected document — optionally viewable only once.**
 
-Encrypts with AES-256-GCM, unlocks in the browser, runs everywhere.
+AES-256-GCM · Argon2id · unlocks in the browser · runs everywhere · nothing leaves your device.
 
 [![CI](https://github.com/drsamonline/lockhtml/actions/workflows/ci.yml/badge.svg)](https://github.com/drsamonline/lockhtml/actions/workflows/ci.yml)
 [![Deploy GUI](https://github.com/drsamonline/lockhtml/actions/workflows/pages.yml/badge.svg)](https://github.com/drsamonline/lockhtml/actions/workflows/pages.yml)
 [![Live GUI](https://img.shields.io/badge/live%20GUI-open%20in%20browser-5a86ff?logo=html5&logoColor=white)](https://drsamonline.github.io/lockhtml/)
+[![Release](https://img.shields.io/github/v/release/drsamonline/lockhtml?color=33d17a&label=release)](https://github.com/drsamonline/lockhtml/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-33d17a.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-8957e5)](#)
-[![Crypto](https://img.shields.io/badge/crypto-AES--256--GCM-ff6b6b)](#how-it-works)
+[![KDF](https://img.shields.io/badge/KDF-Argon2id%20%7C%20PBKDF2-ff6b6b)](#how-it-works)
+[![PWA](https://img.shields.io/badge/PWA-offline%20ready-5a86ff)](#the-gui)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![GitHub stars](https://img.shields.io/github/stars/drsamonline/lockhtml?style=social)](https://github.com/drsamonline/lockhtml/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/drsamonline/lockhtml)](https://github.com/drsamonline/lockhtml/commits)
@@ -21,31 +23,35 @@ Encrypts with AES-256-GCM, unlocks in the browser, runs everywhere.
 
 ---
 
-**LockHTML** takes an ordinary `.html` file, encrypts it with a key derived from a PIN,
-and gives you back a single self-contained `.html` file. Anyone who opens it is asked
-for the PIN; enter it and the document renders in the browser. Choose **one-time view**
-and the document expires the moment it has been opened once.
+**LockHTML** takes an ordinary file — an HTML page, a PDF, a photo, anything — encrypts it with a
+key derived from a PIN, and gives you back a single self-contained `.html` file. Anyone who opens it
+is asked for the PIN; enter it and the document appears. Choose **one-time view** (or a view limit,
+or an expiry date) and it stops opening once the conditions are met.
 
-No server. No accounts. No uploads. The encrypted file is a normal web page you can
-email, message or put on a USB stick.
+No server. No accounts. No uploads. The locked file is a normal web page you can email, message or
+put on a USB stick — and the GUI works **offline** once loaded.
 
 ## ✨ Features
 
-- 🔐 **Real encryption** — AES-256-GCM, key derived with PBKDF2-SHA256 (250,000 iterations by default).
-- 👁️ **One-time view** — optionally expire the document after the first successful open.
+- 🔐 **Argon2id** (memory-hard) by default, with **PBKDF2-SHA256** as a lighter alternative.
+- 🧂 **Keyfile support** — optionally require a second file in addition to the PIN.
+- ✍️ **Ed25519 signing** — sign a locked file so recipients can verify it came from you and wasn't altered.
+- 🎭 **Duress PIN** — a second PIN that opens a harmless decoy document instead.
+- 👁️ **View limits** — one-time, *N* views, a "do not open before" time, and an expiry time.
+- 💧 **Watermarking** — overlay recipient-specific text to trace a leaked copy.
+- 📦 **Any file type** — HTML renders inline; everything else is offered as a download.
+- 🌐 **Browser GUI** — a single self-contained HTML file, installable as a PWA, fully offline.
 - 🖥️ **Cross-platform CLI** — one command on Windows, Linux and macOS.
-- 🌐 **HTML GUI** — a single file that runs in any browser on any OS, and is also
-  [live on the web](https://drsamonline.github.io/lockhtml/). 100% client-side.
-- 📦 **Self-contained output** — the locked file needs no internet, no install, no app.
 - 🔁 **Reversible** — `lockhtml unlock` recovers the original with the PIN.
+- 🌍 **Localised viewer** — English, हिन्दी and ગુજરાતી unlock screens.
 - 🧩 **Zero runtime for the recipient** — any modern browser opens a locked file.
 
 ## 🚀 Quick start
 
 ### GUI (no install)
 
-Open the live app → **<https://drsamonline.github.io/lockhtml/>** — or run it locally with
-the CLI (below). Drag in your HTML, type a PIN, download the locked file.
+Open the live app → **<https://drsamonline.github.io/lockhtml/>** — or run it locally with the CLI.
+Drag in your file, set a PIN, download the locked copy. It works offline after the first load.
 
 ### CLI
 
@@ -54,42 +60,51 @@ pip install lockhtml
 ```
 
 ```bash
-# Lock one file
+# Lock one file with a PIN
 lockhtml lock report.html --pin 4821
 
-# Lock it as a one-time-view document
-lockhtml lock report.html --pin 4821 --one-time
+# One-time view, Argon2id, with a watermark
+lockhtml lock report.html --pin 4821 --one-time --watermark "For A. Sharma"
 
-# Lock a whole folder of pages
-lockhtml lock *.html --pin 4821 --outdir locked/
+# Expire it and cap the views
+lockhtml lock plan.pdf --pin 4821 --max-views 3 --expires 2026-12-31T00:00:00Z
 
-# Recover the original (you need the PIN)
+# Require a keyfile as a second factor
+lockhtml lock report.html --pin 4821 --keyfile team.key
+
+# Sign it so the recipient can verify authenticity
+lockhtml keygen -o sign.pem
+lockhtml lock report.html --pin 4821 --sign sign.pem
+
+# Add a duress PIN that opens a decoy page
+lockhtml lock report.html --pin 4821 --decoy-pin 0000
+
+# Recover the original
 lockhtml unlock report.locked.html --pin 4821 -o report.html
 
 # Open the browser GUI
 lockhtml gui
 ```
 
-That produces `report.locked.html` — a single file that asks for `4821` when opened.
-
-> **Tip:** share the PIN over a *different* channel than the file.
+> **Tip:** share the PIN (and keyfile) over a *different* channel than the file.
 
 ## 🖥️ The GUI
 
-The GUI is one self-contained HTML file (`lockhtml/gui/index.html`). It works offline
-and needs no server:
+One self-contained HTML file (`lockhtml/gui/index.html`) — no server, no build step, works offline:
 
-- **Lock tab** — drop in one or more HTML files, set a PIN, toggle one-time view, download.
+- **Lock tab** — drop in any files, set a PIN (or generate a passphrase), and use the advanced
+  panel for the KDF, view limits, expiry, watermark, keyfile and duress PIN.
 - **Unlock / Verify tab** — open a locked file with its PIN to preview and recover it.
 
-Because it is plain HTML + Web Crypto, it runs identically in Chrome, Edge, Firefox,
-Safari and on Windows, Linux, macOS, Android and iOS.
+Because it's plain HTML + Web Crypto (+ a bundled Argon2 WASM), it runs identically in Chrome,
+Edge, Firefox, Safari and on Windows, Linux, macOS, Android and iOS. The hosted copy is a
+**PWA** — installable, and cached for offline use.
 
 ## 📸 Screenshots
 
 <div align="center">
 
-**The GUI — lock any file straight from your browser**
+**The GUI — every option, straight from your browser**
 
 <img src="assets/gui-lock.png" alt="LockHTML GUI - lock tab" width="780">
 
@@ -103,72 +118,88 @@ Safari and on Windows, Linux, macOS, Android and iOS.
 
 ## 🔬 How it works
 
-1. Your document is encrypted with **AES-256-GCM**.
-2. The key is derived from your PIN with **PBKDF2-SHA256** and a random 16-byte salt.
-3. The salt, IV and ciphertext are embedded as JSON inside a small *viewer* page.
-4. Opening the file runs the viewer, which asks for the PIN and decrypts **in the browser**
-   using the Web Crypto API. The plaintext never leaves the device.
+1. Your file is encrypted with **AES-256-GCM**.
+2. The key is derived from your PIN with **Argon2id** (or PBKDF2-SHA256) and a random 16-byte salt.
+3. If a **keyfile** is used, it is mixed in as a pepper (a post-KDF HMAC), so the PIN alone is not enough.
+4. If you **sign**, an Ed25519 signature over the ciphertext is embedded with your public key.
+5. The salt, IV and ciphertext are embedded as JSON inside a small *viewer* page.
+6. Opening the file runs the viewer, which asks for the PIN and decrypts **in the browser**.
+   The plaintext never leaves the device.
 
 ```
-locked.html = viewer shell  +  { salt, iv, AES-256-GCM(ciphertext), one-time flag }
+locked.html = viewer shell + { kdf, params, salt, iv, AES-256-GCM(ciphertext), limits, watermark, sig }
 ```
 
-The CLI (Python) and the GUI (JavaScript) implement the same format, so files lock and
-unlock interchangeably across both. See [`lockhtml/core.py`](lockhtml/core.py) for the spec.
+The full format is documented in [`docs/FORMAT.md`](docs/FORMAT.md). The CLI (Python) and the GUI
+(JavaScript) implement the same format, so files lock and unlock interchangeably across both —
+enforced by CI on every push.
 
 ## 🛡️ Security model — read this
 
-**The PIN gives you real encryption.** Without it, the file is unreadable even if someone
-opens it in a text editor and inspects the source. Wrong PINs are rejected cryptographically
-(AES-GCM authentication), not by a simple string check.
+**The PIN (and keyfile) gives you real encryption.** Without them the file is unreadable even if
+someone opens it in a text editor. Wrong PINs are rejected cryptographically (AES-GCM
+authentication), not by a string comparison. Signatures are verified before the content is shown.
 
-**"One-time view" is a browser-enforced deterrent, not a server guarantee.** Since the file
-has no server, expiry is stored in the browser's `localStorage`. A determined recipient can
-copy the file first, open it in another browser or incognito window, clear their storage, or
-screenshot the decrypted page. It stops casual re-sharing and accidental forwarding; it is not
-a hard guarantee.
+**The view limits, watermark and one-time view are browser-enforced deterrents, not server
+guarantees.** Since there is no server, the view counter lives in the browser's IndexedDB. A
+determined recipient can copy the file first, use another browser or profile, clear their storage,
+or screenshot the decrypted page. These features stop casual re-sharing and help you trace a leak;
+they are not a hard guarantee.
 
 **This is not a substitute for end-to-end tools** when the stakes are high (medical records,
-credentials, legal documents). Once a recipient decrypts, the content is on their screen and
-in their memory. For genuinely enforced single-view delivery, use a server that deletes the
-document after the first fetch.
+credentials, legal documents). Once a recipient decrypts, the content is on their screen and in
+their memory. For genuinely enforced single-view delivery, use a server that deletes the document
+after the first fetch.
 
 | Property | Guarantee |
 | --- | --- |
-| Content unreadable without PIN | ✅ Strong (AES-256-GCM) |
+| Content unreadable without PIN | ✅ Strong (AES-256-GCM + Argon2id) |
 | Wrong PIN rejected | ✅ Strong (authenticated encryption) |
+| Keyfile required as a second factor | ✅ Strong (pepper) |
+| Authenticity (sender identity) | ✅ Strong when signed (Ed25519) |
 | Works offline / no upload | ✅ Yes |
-| Truly view-once | ⚠️ Best-effort (client-side) |
+| Truly view-once / expiry | ⚠️ Best-effort (client-side) |
 | Survives a determined recipient | ❌ No |
+
+See [`SECURITY.md`](SECURITY.md) and the self-audit in [`docs/AUDIT.md`](docs/AUDIT.md).
 
 ## 📂 Project layout
 
 ```
 lockhtml/
 ├── lockhtml/
-│   ├── core.py              # crypto + payload format
-│   ├── cli.py               # command-line interface
+│   ├── core.py                 # crypto + payload format v2
+│   ├── cli.py                  # command-line interface
 │   ├── templates/
-│   │   └── viewer.html      # the unlock shell embedded in every locked file
+│   │   ├── viewer.src.html     # viewer source (generated files below)
+│   │   ├── viewer.html         # PBKDF2-only viewer (small)
+│   │   └── viewer-argon2.html  # viewer with Argon2id WASM inlined
 │   └── gui/
-│       ├── app.html         # GUI source (template placeholder)
-│       └── index.html       # generated, self-contained GUI
-├── tools/build_gui.py       # inlines viewer.html into the GUI
-├── tests/test_core.py       # crypto + CLI tests
-├── examples/                # sample.html and its locked twin
-└── .github/workflows/       # CI + GitHub Pages deploy
+│       ├── app.html            # GUI source
+│       ├── index.html          # generated, self-contained GUI
+│       ├── manifest.webmanifest, sw.js, icon.svg   # PWA
+├── tools/
+│   ├── build.py                # builds the viewer variants + GUI
+│   ├── minify.mjs              # minifies the generated assets
+│   └── check_gui_compat.mjs    # cross-implementation check (run in CI)
+├── docs/                       # format spec + audit
+├── tests/                      # crypto + CLI tests
+├── examples/                   # sample.html and its locked twin
+└── .github/workflows/          # CI + GitHub Pages deploy
 ```
 
 ## 🤝 Contributing
 
-Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Planned work lives in
+[ROADMAP.md](ROADMAP.md).
 
 ```bash
 git clone https://github.com/drsamonline/lockhtml
 cd lockhtml
 pip install -e ".[dev]"
-make test        # run the test suite
-make gui         # regenerate lockhtml/gui/index.html
+npm install          # build tooling: minifier + Argon2 WASM
+make test            # run the test suite
+make build           # regenerate + minify the GUI and viewers
 ```
 
 ## 📜 License

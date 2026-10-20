@@ -96,6 +96,28 @@ ok("stream: tampered sidecar rejected", !(await waitStage()));
 await open("s_html.html"); await type("4821");
 ok("stream: missing data file rejected", !(await waitStage()));
 
+// ---- X25519 recipient mode ----
+await open("r_embedded.html"); await upload("#privkey", "rec.pem"); await page.click("#unlock");
+ok("recipient: unlock with private key (no PIN)", (await waitStage()) && (await srcdoc()).includes("ORION-7742"));
+
+await open("r_embedded.html"); await page.click("#unlock");
+ok("recipient: missing private key rejected", !(await waitStage()));
+
+await open("r_embedded.html"); await upload("#privkey", "other.pem"); await page.click("#unlock");
+ok("recipient: wrong private key rejected", !(await waitStage()));
+
+await open("r_pin.html"); await upload("#privkey", "rec.pem"); await type("4821");
+ok("recipient: private key + PIN", (await waitStage()) && (await srcdoc()).includes("ORION-7742"));
+
+await open("r_pin.html"); await upload("#privkey", "rec.pem"); await page.click("#unlock");
+ok("recipient: PIN required but missing", !(await waitStage()));
+
+await open("r_file.html"); await upload("#privkey", "rec.pem"); await page.click("#unlock");
+ok("recipient: binary -> download", (await waitStage()) && (await vis("dlwrap")));
+
+await open("r_stream.html"); await upload("#privkey", "rec.pem"); await upload("#datafile", "r_stream.bin"); await page.click("#unlock");
+ok("recipient: streaming bundle", (await waitStage()) && (await vis("dlwrap")));
+
 await browser.close();
 const failed = results.filter((r) => !r[1]).length;
 console.log(`\n${results.length - failed}/${results.length} browser checks passed`);

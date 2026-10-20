@@ -13,7 +13,8 @@ This document specifies format **v2** (LockHTML ≥ 1.1). v1 files remain readab
   "v":         2,
   "kind":      "html" | "file",     // how the viewer should present the plaintext
   "name":      "report.pdf" | null, // original filename (kind == "file")
-  "kdf":       "argon2id" | "pbkdf2",
+  "mode":      "pin" | "recipient", // see "Recipient mode" below
+  "kdf":       "argon2id" | "pbkdf2" | "x25519-hkdf",
   "kdfparams": { "m": 19456, "t": 2, "p": 1 }   // argon2id  (m in KiB)
                | { "iter": 250000 },            // pbkdf2
   "salt":      "<base64>",          // 16 random bytes
@@ -58,6 +59,39 @@ Given the PIN as UTF-8 bytes and the optional keyfile bytes:
    keeps the two KDFs identical. The result is the AES-256-GCM key.
 
 The keyfile is never stored in the file; only the boolean `keyfile` flag is.
+
+## Recipient mode (X25519)
+
+Instead of (or in addition to) a PIN, a file can be locked to a recipient's **X25519 public key**,
+so only the holder of the matching private key can open it. No shared secret is exchanged.
+
+The payload carries:
+
+```jsonc
+  "mode":      "recipient",
+  "kdf":       "x25519-hkdf",
+  "kdfparams": { "info": "lockhtml/x25519" },
+  "eph":       "<base64 32-byte ephemeral public key>",
+  "pin":       true | false,   // whether a PIN is *also* required
+  "salt":      "<base64>"      // HKDF salt, 16 random bytes
+```
+
+Derivation (hybrid encryption):
+
+```
+shared = X25519(ephemeral_private, recipient_public)      # sender
+       = X25519(recipient_private, ephemeral_public)      # recipient
+
+ikm = shared || utf8(pin)          # the pin part only when "pin" is true
+key = HKDF-SHA256(ikm, salt, info="lockhtml/x25519", 32)
+key = HMAC-SHA256(key, keyfile)    # only when a keyfile is required
+```
+
+A fresh ephemeral keypair is generated for every file, so the same recipient key can be reused
+safely. Because the shared secret is already 256 bits of entropy, no slow KDF is applied on top;
+the optional PIN simply extends the HKDF input. `decoy` is not available in recipient mode.
+
+Private keys are PKCS#8 PEM; public keys are the 32-byte raw value, base64.
 
 ## Encryption
 

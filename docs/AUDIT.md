@@ -45,6 +45,22 @@ produced by the Python core.
 viewer collects the chunks into a `Blob`. Reading and decryption are O(chunk size). Constant-memory
 output needs the File System Access API and is on the roadmap.
 
+## Recipient mode review (v1.3)
+
+X25519 hybrid encryption was reviewed against the usual ECIES pitfalls:
+
+| Risk | Mitigation | Test |
+| --- | --- | --- |
+| Ephemeral key reuse | A fresh keypair per file | `test_recipient_ephemeral_is_random` |
+| Low-entropy key fed to AES directly | Shared secret passes through HKDF-SHA256 | round-trip tests |
+| Wrong recipient key accepted | GCM authentication fails | `test_recipient_wrong_key_fails` |
+| Optional PIN silently ignored | `pin` flag in the payload gates whether it is mixed in | `test_recipient_with_pin` |
+| Ephemeral key swapped by an attacker | Covered by the streaming MAC in stream mode | `test_recipient_stream_metadata_tamper` |
+| Decoy PIN in recipient mode | Rejected outright rather than ignored | `test_recipient_decoy_not_allowed` |
+
+**Known limitation.** A leaked private key cannot be revoked; anyone holding it can open every file
+locked to that key. Key rotation is the only remedy, and it is the user's responsibility.
+
 ## Findings
 
 ### Fixed during this cycle
@@ -55,6 +71,7 @@ output needs the File System Access API and is on the roadmap.
 | 2 | `unlock()` returned text, silently corrupting binary payloads. | Medium | Returns raw bytes; binary round-trip is tested. |
 | 3 | A minifier configuration produced assets that failed to parse. | Low | Config corrected; CI now rebuilds and diffs the generated assets so a broken build cannot be committed. |
 | 4 | `unlock` with `-o` stopped writing the plaintext for the embedded container after the streaming branch was added. | Medium | Caught by the test suite; fixed and covered by `test_cli_lock_and_unlock`. |
+| 5 | `build_locked_html` still required a positional `pin`, so recipient mode could not be used through it. | Low | Made optional; covered by the recipient CLI test. |
 
 ### Reviewed and judged acceptable
 

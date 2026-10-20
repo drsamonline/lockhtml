@@ -10,10 +10,15 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
+import base64  # noqa: E402
+
 from lockhtml.core import (  # noqa: E402
     build_locked_html,
+    generate_recipient_key,
     generate_signing_key,
+    recipient_public_bytes,
     render_viewer,
+    save_recipient_key,
     save_signing_key,
     stream_encrypt_file,
 )
@@ -67,6 +72,25 @@ def main() -> int:
     raw[20] ^= 0x01
     open(p("s_html_tampered.bin"), "wb").write(bytes(raw))
 
+    # ---- X25519 recipient mode ----
+    rkey = generate_recipient_key()
+    save_recipient_key(rkey, p("rec.pem"))
+    rpub = recipient_public_bytes(rkey)
+    open(p("r_embedded.html"), "w").write(build_locked_html(DOC, recipient=rpub, kind="html"))
+    open(p("r_pin.html"), "w").write(build_locked_html(DOC, PIN, recipient=rpub, kind="html"))
+    open(p("r_file.html"), "w").write(
+        build_locked_html(b"\x00\x01RECIPIENT", recipient=rpub, kind="file", name="r.bin"))
+    rsrc = p("r_stream.src")
+    with open(rsrc, "wb") as fh:
+        fh.write(os.urandom(300_000))
+    rp = stream_encrypt_file(rsrc, None, p("r_stream.bin"), recipient=rpub,
+                             kind="file", name="rs.bin", chunk_size=65536)
+    open(p("r_stream.html"), "w").write(render_viewer(rp))
+    # a second, unrelated private key
+    other = generate_recipient_key()
+    save_recipient_key(other, p("other.pem"))
+
+    open(p("rec.pub"), "w").write(base64.b64encode(rpub).decode() + "\n")
     print(f"wrote fixtures to {out}")
     return 0
 

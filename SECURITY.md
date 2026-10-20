@@ -17,6 +17,10 @@ We aim to acknowledge reports within a few days.
   - PBKDF2 iterations: 250,000.
 - Random salt (16 bytes) and IV (12 bytes) per file, from a CSPRNG.
 - **Keyfile**: optional; mixed in as `HMAC-SHA256(derived_key, keyfile_bytes)`.
+- **Recipient mode**: X25519 hybrid encryption — a fresh ephemeral keypair per file, shared secret
+  fed to HKDF-SHA256 (info `lockhtml/x25519`), then AES-256-GCM. An optional PIN extends the HKDF
+  input; a keyfile pepper is applied on top. No slow KDF is used, since the ECDH secret is already
+  256 bits of entropy. See [docs/FORMAT.md](docs/FORMAT.md#recipient-mode-x25519).
 - **Signing**: optional Ed25519 over the ciphertext (embedded) or over the MAC input (streaming);
   verified in-browser before display.
 - **Streaming container**: AES-256-GCM per 1 MiB chunk, nonce = `base_iv || uint32_be(index)`,
@@ -36,6 +40,8 @@ LockHTML is a **client-side** tool. Understanding its threat model matters:
   the raw source.
 - **The streaming container's MAC is keyed by the PIN-derived key**, so it protects integrity but
   not authenticity — only an Ed25519 signature proves who produced the file. Sign when that matters.
+- **Recipient mode moves the secret, not the trust.** Whoever holds the private key can open every
+  file locked to it, and a leaked private key cannot be revoked. Rotate keys if one is exposed.
 - **View limits, expiry, watermarking and one-time view are best-effort.** Enforcement happens in
   the browser (IndexedDB). A recipient who controls their machine can defeat it — copy the file, use
   another browser/profile, clear storage, or screenshot the decrypted page. This is a known and

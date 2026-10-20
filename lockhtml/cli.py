@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import sys
 import tempfile
 import webbrowser
@@ -14,9 +15,14 @@ from .core import (
     DEFAULT_KDF,
     build_locked_html,
     extract_payload,
+    generate_recipient_key,
     generate_signing_key,
+    load_recipient_key,
     load_signing_key,
+    parse_recipient_public,
+    recipient_public_bytes,
     render_viewer,
+    save_recipient_key,
     save_signing_key,
     stream_decrypt_file,
     stream_encrypt_file,
@@ -49,6 +55,17 @@ def cmd_lock(args: argparse.Namespace) -> int:
     keyfile = Path(args.keyfile).read_bytes() if args.keyfile else None
     sign_key = load_signing_key(args.sign) if args.sign else None
 
+    recipient = None
+    if args.to:
+        src = Path(args.to)
+        recipient = parse_recipient_public(src.read_text(encoding="utf-8") if src.is_file() else args.to)
+    if not args.pin and recipient is None:
+        print("error: provide --pin, or --to <recipient public key>", file=sys.stderr)
+        return 2
+    if args.decoy_pin and recipient is not None:
+        print("error: --decoy-pin is only available in PIN mode", file=sys.stderr)
+        return 2
+
     decoy = None
     if args.decoy_pin:
         decoy_doc = Path(args.decoy_file).read_text(encoding="utf-8") if args.decoy_file else DECOY_HTML
@@ -76,6 +93,7 @@ def cmd_lock(args: argparse.Namespace) -> int:
                 bin_path = dest.with_suffix(".bin")
                 payload = stream_encrypt_file(
                     str(src), args.pin, str(bin_path),
+                    recipient=recipient,
                     kdf=args.kdf, keyfile=keyfile, chunk_size=args.chunk_size * 1024,
                     one_time=args.one_time, max_views=args.max_views,
                     not_before=args.not_before, expires=args.expires,
@@ -86,6 +104,7 @@ def cmd_lock(args: argparse.Namespace) -> int:
             else:
                 locked = build_locked_html(
                     _read_bytes(src), args.pin,
+                    recipient=recipient,
                     kdf=args.kdf, keyfile=keyfile, one_time=args.one_time,
                     max_views=args.max_views, not_before=args.not_before,
                     expires=args.expires, watermark=args.watermark,
@@ -99,7 +118,9 @@ def cmd_lock(args: argparse.Namespace) -> int:
             continue
 
         tags = []
-        if args.kdf:
+        if recipient is not None:
+            tags.append("recipient")
+        elif args.kdf:
             tags.append(args.kdf)
         if args.stream:
             tags.append("streaming")
@@ -122,6 +143,7 @@ def cmd_unlock(args: argparse.Namespace) -> int:
         print(f"error: no such file: {src}", file=sys.stderr)
         return 2
     keyfile = Path(args.keyfile).read_bytes() if args.keyfile else None
+    private_key = load_recipient_key(args.key) if args.key else None
     text = src.read_text(encoding="utf-8")
     try:
         payload = extract_payload(text)
@@ -132,9 +154,9 @@ def cmd_unlock(args: argparse.Namespace) -> int:
                 return 2
             plaintext = stream_decrypt_file(
                 str(data_path), payload, args.pin,
-                str(args.output) if args.output else None, keyfile)
+                str(args.output) if args.output else None, keyfile, private_key)
         else:
-            plaintext = unlock(text, args.pin, keyfile)
+            plaintext = unlock(text, args.pin, keyfile, private_key)
     except Exception:
         print("error: wrong PIN, missing keyfile, or not a LockHTML file", file=sys.stderr)
         return 1
@@ -148,6 +170,21 @@ def cmd_unlock(args: argparse.Namespace) -> int:
 
 
 def cmd_keygen(args: argparse.Namespace) -> int:
+    if args.type == "x25519":
+        dest = Path(args.output or "lockhtml-recipient-key.pem")
+        if dest.exists() and not args.force:
+            print(f"error: {dest} already exists (use --force to overwrite)", file=sys.stderr)
+            return 2
+        key = generate_recipient_key()
+        save_recipient_key(key, str(dest))
+        pub_path = dest.with_suffix(".pub")
+        pub_path.write_text(base64.b64encode(recipient_public_bytes(key)).decode() + "\n",
+                            encoding="utf-8")
+        print(f"wrote X25519 private key -> {dest}   (keep this secret)")
+        print(f"wrote X25519 public key  -> {pub_path}   (give this to senders)")
+        print("Senders: lockhtml lock FILE --to " + str(pub_path))
+        return 0
+
     dest = Path(args.output or "lockhtml-signing-key.pem")
     if dest.exists() and not args.force:
         print(f"error: {dest} already exists (use --force to overwrite)", file=sys.stderr)
@@ -191,7 +228,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_lock = sub.add_parser("lock", help="encrypt file(s) behind a PIN")
     p_lock.add_argument("input", nargs="+", help="input file(s)")
-    p_lock.add_argument("--pin", required=True, help="PIN / passphrase")
+    p_lock.add_argument("--pin", default=None, help="PIN / passphrase (omit when using --to)")
+    p_lock.add_argument("--to", default=None,
+                        help="lock to an X25519 recipient public key (a .pub file or base64 string)")
     p_lock.add_argument("-o", "--output", help="output path (single input only)")
     p_lock.add_argument("--outdir", help="directory to write locked files into")
     p_lock.add_argument("--kdf", choices=["argon2id", "pbkdf2"], default=DEFAULT_KDF,
@@ -213,14 +252,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_unlock = sub.add_parser("unlock", help="decrypt a locked file with its PIN")
     p_unlock.add_argument("input", help="locked .html file")
-    p_unlock.add_argument("--pin", required=True, help="PIN / passphrase")
+    p_unlock.add_argument("--pin", default=None, help="PIN / passphrase")
+    p_unlock.add_argument("--key", default=None, help="X25519 private key (PEM) for recipient-mode files")
     p_unlock.add_argument("--keyfile", default=None, help="keyfile, if one is required")
     p_unlock.add_argument("--data", default=None, help="sidecar .bin for a streaming container")
     p_unlock.add_argument("-o", "--output", help="write plaintext here (default: stdout)")
     p_unlock.set_defaults(func=cmd_unlock)
 
-    p_keygen = sub.add_parser("keygen", help="generate an Ed25519 signing key")
-    p_keygen.add_argument("-o", "--output", help="output PEM path (default: lockhtml-signing-key.pem)")
+    p_keygen = sub.add_parser("keygen", help="generate an Ed25519 signing key or an X25519 recipient key")
+    p_keygen.add_argument("--type", choices=["ed25519", "x25519"], default="ed25519",
+                          help="ed25519 for signing (default), x25519 for recipient encryption")
+    p_keygen.add_argument("-o", "--output", help="output PEM path")
     p_keygen.add_argument("--force", action="store_true", help="overwrite an existing key")
     p_keygen.set_defaults(func=cmd_keygen)
 

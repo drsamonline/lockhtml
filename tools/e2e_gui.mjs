@@ -28,7 +28,7 @@ const out = await page.evaluate(async () => {
   const doc = new TextEncoder().encode("<!DOCTYPE html><html><body><p>ORION-7742 GUI</p></body></html>");
   const kf = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   const base = { pin: "4821", oneTime: false, maxViews: null, notBefore: null, expires: null,
-                 watermark: "GUI-WM", decoyPin: null, kind: "html", name: null };
+                 watermark: "GUI-WM", decoyPin: null, kind: "html", name: null, recipient: null };
   const files = {};
   const embedded = async (tag, extra) => {
     const p = await makePayload(doc, { ...base, ...extra });
@@ -48,6 +48,21 @@ const out = await page.evaluate(async () => {
   let s = ""; for (let i = 0; i < binBytes.length; i++) s += String.fromCharCode(binBytes[i]);
   files["gui_stream.bin.b64"] = btoa(s);
   files["gui_kf.b64"] = btoa(String.fromCharCode(...kf));
+
+  // recipient (X25519) mode - generate a keypair in the browser
+  const rk = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+  const rpub = new Uint8Array(await crypto.subtle.exportKey("raw", rk.publicKey));
+  const rpriv = new Uint8Array(await crypto.subtle.exportKey("pkcs8", rk.privateKey));
+  const b64bytes = (u) => { let x = ""; for (let i = 0; i < u.length; i++) x += String.fromCharCode(u[i]); return btoa(x); };
+  files["gui_recip_priv.b64"] = b64bytes(rpriv);
+
+  const rp = await makePayload(doc, { ...base, recipient: rpub, pin: null, kdf: "argon2id", keyfile: null });
+  files["gui_recip.html"] = VIEWER_TEMPLATE_ARGON2.replace("__PAYLOAD__", JSON.stringify(rp));
+  const rstream = await streamEncrypt(doc, { ...base, recipient: rpub, pin: null, kdf: "argon2id", keyfile: null,
+    chunkSize: 65536, dataName: "gui_recip_stream.bin" });
+  files["gui_recip_stream.html"] = VIEWER_TEMPLATE_ARGON2.replace("__PAYLOAD__", JSON.stringify(rstream.payload));
+  const rb = new Uint8Array(await rstream.bin.arrayBuffer());
+  files["gui_recip_stream.bin.b64"] = b64bytes(rb);
   return files;
 });
 

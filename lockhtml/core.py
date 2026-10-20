@@ -51,12 +51,17 @@ from typing import Any, Dict, Optional, Tuple, Union
 
 from argon2.low_level import Type as _Argon2Type
 from argon2.low_level import hash_secret_raw as _argon2_raw
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
 )
+from cryptography.hazmat.primitives.asymmetric.x25519 import (
+    X25519PrivateKey,
+    X25519PublicKey,
+)
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 FORMAT_VERSION = 2
 
@@ -193,6 +198,74 @@ def verify_signature(payload: Dict[str, Any]) -> Optional[bool]:
 # --------------------------------------------------------------------------- #
 # encrypt / decrypt
 # --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# X25519 recipient mode (lock to a public key)
+# --------------------------------------------------------------------------- #
+# Hybrid encryption: a fresh ephemeral X25519 keypair is generated per file, its
+# shared secret with the recipient's public key becomes HKDF input keying
+# material, and the resulting 32-byte key encrypts the payload with AES-GCM. An
+# optional PIN (and the optional keyfile pepper) can be layered on top.
+#
+#   shared = X25519(ephemeral_private, recipient_public)
+#          = X25519(recipient_private, ephemeral_public)
+#   ikm    = shared || utf8(pin)              (pin only when required)
+#   key    = HKDF-SHA256(ikm, salt, info="lockhtml/x25519", 32)
+#   key    = HMAC-SHA256(key, keyfile)        (only when a keyfile is required)
+
+HKDF_INFO = b"lockhtml/x25519"
+
+
+def generate_recipient_key() -> X25519PrivateKey:
+    return X25519PrivateKey.generate()
+
+
+def recipient_public_bytes(key: X25519PrivateKey) -> bytes:
+    return key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+
+
+def save_recipient_key(key: X25519PrivateKey, path: str) -> None:
+    pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    with open(path, "wb") as fh:
+        fh.write(pem)
+
+
+def load_recipient_key(path: str) -> X25519PrivateKey:
+    with open(path, "rb") as fh:
+        key = serialization.load_pem_private_key(fh.read(), password=None)
+    if not isinstance(key, X25519PrivateKey):
+        raise ValueError("not an X25519 private key")
+    return key
+
+
+def parse_recipient_public(value: Union[str, bytes]) -> bytes:
+    """Accept a base64 key, a .pub file's contents, or a PEM public key."""
+    text = value.decode("utf-8", "ignore") if isinstance(value, (bytes, bytearray)) else value
+    text = text.strip()
+    if "BEGIN PUBLIC KEY" in text:
+        pub = serialization.load_pem_public_key(text.encode("utf-8"))
+        if not isinstance(pub, X25519PublicKey):
+            raise ValueError("not an X25519 public key")
+        return pub.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    raw = base64.b64decode("".join(text.split()))
+    if len(raw) != 32:
+        raise ValueError("an X25519 public key must be 32 bytes")
+    return raw
+
+
+def _recipient_key(shared: bytes, pin: Optional[str], keyfile: Optional[bytes],
+                   salt: bytes) -> bytes:
+    ikm = shared + (pin.encode("utf-8") if pin else b"")
+    key = HKDF(algorithm=hashes.SHA256(), length=32, salt=salt, info=HKDF_INFO).derive(ikm)
+    if keyfile:
+        key = hmac.new(key, keyfile, hashlib.sha256).digest()
+    return key
+
+
 def _encrypt_blob(
     data: bytes,
     pin: str,
@@ -209,8 +282,9 @@ def _encrypt_blob(
 
 def encrypt(
     data: Source,
-    pin: str,
+    pin: Optional[str] = None,
     *,
+    recipient: Optional[bytes] = None,
     kdf: str = DEFAULT_KDF,
     kdfparams: Optional[Dict[str, Any]] = None,
     keyfile: Optional[bytes] = None,
@@ -224,11 +298,33 @@ def encrypt(
     sign_key: Optional[Ed25519PrivateKey] = None,
     decoy: Optional[Decoy] = None,
 ) -> Dict[str, Any]:
-    """Encrypt ``data`` under ``pin`` and return a v2 payload dictionary."""
-    if kdfparams is None:
-        kdfparams = ARGON2_PARAMS if kdf == "argon2id" else PBKDF2_PARAMS
+    """Encrypt ``data`` under a PIN, or to a recipient's X25519 public key."""
+    if decoy is not None and recipient is not None:
+        raise ValueError("the decoy PIN is only available in PIN mode")
 
-    blob = _encrypt_blob(_as_bytes(data), pin, kdf, kdfparams, keyfile)
+    if recipient is not None:
+        eph = X25519PrivateKey.generate()
+        shared = eph.exchange(X25519PublicKey.from_public_bytes(recipient))
+        salt, iv = os.urandom(16), os.urandom(12)
+        key = _recipient_key(shared, pin, keyfile, salt)
+        ct = AESGCM(key).encrypt(iv, _as_bytes(data), None)
+        blob = {"salt": _b64(salt), "iv": _b64(iv), "ct": _b64(ct)}
+        mode_fields: Dict[str, Any] = {
+            "mode": "recipient",
+            "kdf": "x25519-hkdf",
+            "kdfparams": {"info": HKDF_INFO.decode("ascii")},
+            "eph": _b64(recipient_public_bytes(eph)),
+            "pin": bool(pin),
+        }
+    else:
+        if pin is None:
+            raise ValueError("a PIN or a recipient public key is required")
+        if kdfparams is None:
+            kdfparams = ARGON2_PARAMS if kdf == "argon2id" else PBKDF2_PARAMS
+        blob = _encrypt_blob(_as_bytes(data), pin, kdf, kdfparams, keyfile)
+        mode_fields = {"mode": "pin", "kdf": kdf, "kdfparams": dict(kdfparams),
+                       "eph": None, "pin": True}
+
     ciphertext = _unb64(blob["ct"])
 
     if one_time and max_views is None:
@@ -238,8 +334,7 @@ def encrypt(
         "v": FORMAT_VERSION,
         "kind": kind,
         "name": name,
-        "kdf": kdf,
-        "kdfparams": dict(kdfparams),
+        **mode_fields,
         "salt": blob["salt"],
         "iv": blob["iv"],
         "ct": blob["ct"],
@@ -265,18 +360,31 @@ def encrypt(
     return payload
 
 
-def _decrypt_blob(blob: Dict[str, Any], pin: str, keyfile: Optional[bytes]) -> bytes:
-    kdf = blob.get("kdf", DEFAULT_KDF)
-    kdfparams = blob.get("kdfparams")
-    if kdfparams is None and "iter" in blob:  # legacy v1
-        kdfparams = {"iter": blob["iter"]}
-    key = derive_key(pin, _unb64(blob["salt"]), kdf, kdfparams, keyfile)
+def _decrypt_blob(blob: Dict[str, Any], pin: Optional[str], keyfile: Optional[bytes],
+                  private_key: Optional[X25519PrivateKey] = None) -> bytes:
+    if blob.get("mode") == "recipient":
+        if private_key is None:
+            raise ValueError("this file needs its X25519 private key")
+        shared = private_key.exchange(
+            X25519PublicKey.from_public_bytes(_unb64(blob["eph"])))
+        key = _recipient_key(shared, pin if blob.get("pin") else None, keyfile,
+                             _unb64(blob["salt"]))
+    else:
+        if pin is None:
+            raise ValueError("a PIN is required")
+        kdf = blob.get("kdf", DEFAULT_KDF)
+        kdfparams = blob.get("kdfparams")
+        if kdfparams is None and "iter" in blob:  # legacy v1
+            kdfparams = {"iter": blob["iter"]}
+        key = derive_key(pin, _unb64(blob["salt"]), kdf, kdfparams, keyfile)
     return AESGCM(key).decrypt(_unb64(blob["iv"]), _unb64(blob["ct"]), None)
 
 
-def decrypt(payload: Dict[str, Any], pin: str, keyfile: Optional[bytes] = None) -> bytes:
-    """Decrypt a payload with ``pin``; raises ``InvalidTag`` on a wrong PIN."""
-    return _decrypt_blob(payload, pin, keyfile)
+def decrypt(payload: Dict[str, Any], pin: Optional[str] = None,
+            keyfile: Optional[bytes] = None,
+            private_key: Optional[X25519PrivateKey] = None) -> bytes:
+    """Decrypt a payload with a PIN, or with an X25519 private key."""
+    return _decrypt_blob(payload, pin, keyfile, private_key)
 
 
 def try_decoy(payload: Dict[str, Any], pin: str, keyfile: Optional[bytes] = None):
@@ -305,7 +413,7 @@ def load_template(kdf: str = DEFAULT_KDF) -> str:
 
 def build_locked_html(
     source: Source,
-    pin: str,
+    pin: Optional[str] = None,
     *,
     template: Optional[str] = None,
     **kwargs: Any,
@@ -325,9 +433,11 @@ def extract_payload(locked_html: str) -> Dict[str, Any]:
     return json.loads(match.group(1))
 
 
-def unlock(locked_html: str, pin: str, keyfile: Optional[bytes] = None) -> bytes:
+def unlock(locked_html: str, pin: Optional[str] = None,
+           keyfile: Optional[bytes] = None,
+           private_key: Optional[X25519PrivateKey] = None) -> bytes:
     """Decrypt a locked HTML document back to its original plaintext bytes."""
-    return decrypt(extract_payload(locked_html), pin, keyfile)
+    return decrypt(extract_payload(locked_html), pin, keyfile, private_key)
 
 
 # --------------------------------------------------------------------------- #
@@ -364,12 +474,14 @@ DEFAULT_CHUNK_SIZE = 1 << 20
 def _kdfparams_str(kdfparams: Dict[str, Any]) -> str:
     if "m" in kdfparams:
         return f"{kdfparams['m']},{kdfparams.get('t')},{kdfparams.get('p')}"
+    if "info" in kdfparams:  # x25519 recipient mode
+        return str(kdfparams["info"])
     return str(kdfparams.get("iter"))
 
 
 def _meta_string(payload: Dict[str, Any]) -> str:
     """Deterministic, order-fixed metadata that the integrity MAC covers."""
-    return "|".join([
+    parts = [
         f"v{FORMAT_VERSION}",
         str(payload.get("kdf")),
         _kdfparams_str(payload.get("kdfparams") or {}),
@@ -382,7 +494,11 @@ def _meta_string(payload: Dict[str, Any]) -> str:
         "" if payload.get("maxviews") is None else str(payload.get("maxviews")),
         str(payload.get("notbefore") or ""),
         str(payload.get("expires") or ""),
-    ])
+    ]
+    # Appended only in recipient mode, so v1.2 PIN-mode sidecars still verify.
+    if payload.get("mode") == "recipient":
+        parts.append(str(payload.get("eph") or ""))
+    return "|".join(parts)
 
 
 def _chunk_nonce(base_iv: bytes, index: int) -> bytes:
@@ -395,9 +511,10 @@ def _chunk_aad(index: int) -> bytes:
 
 def stream_encrypt_file(
     src_path: str,
-    pin: str,
-    data_path: str,
+    pin: Optional[str] = None,
+    data_path: str = "",
     *,
+    recipient: Optional[bytes] = None,
     kdf: str = DEFAULT_KDF,
     kdfparams: Optional[Dict[str, Any]] = None,
     keyfile: Optional[bytes] = None,
@@ -412,14 +529,28 @@ def stream_encrypt_file(
     sign_key: Optional[Ed25519PrivateKey] = None,
 ) -> Dict[str, Any]:
     """Encrypt a file into a streaming sidecar; returns the payload for the viewer."""
-    if kdfparams is None:
-        kdfparams = ARGON2_PARAMS if kdf == "argon2id" else PBKDF2_PARAMS
     if one_time and max_views is None:
         max_views = 1
 
     salt = os.urandom(16)
     base_iv = os.urandom(8)
-    key = derive_key(pin, salt, kdf, kdfparams, keyfile)
+    if recipient is not None:
+        eph = X25519PrivateKey.generate()
+        shared = eph.exchange(X25519PublicKey.from_public_bytes(recipient))
+        key = _recipient_key(shared, pin, keyfile, salt)
+        mode_fields: Dict[str, Any] = {
+            "mode": "recipient", "kdf": "x25519-hkdf",
+            "kdfparams": {"info": HKDF_INFO.decode("ascii")},
+            "eph": _b64(recipient_public_bytes(eph)), "pin": bool(pin),
+        }
+    else:
+        if pin is None:
+            raise ValueError("a PIN or a recipient public key is required")
+        if kdfparams is None:
+            kdfparams = ARGON2_PARAMS if kdf == "argon2id" else PBKDF2_PARAMS
+        key = derive_key(pin, salt, kdf, kdfparams, keyfile)
+        mode_fields = {"mode": "pin", "kdf": kdf, "kdfparams": dict(kdfparams),
+                       "eph": None, "pin": True}
     aes = AESGCM(key)
 
     total = os.path.getsize(src_path)
@@ -430,8 +561,7 @@ def stream_encrypt_file(
         "container": "stream",
         "kind": kind,
         "name": name,
-        "kdf": kdf,
-        "kdfparams": dict(kdfparams),
+        **mode_fields,
         "salt": _b64(salt),
         "baseiv": _b64(base_iv),
         "chunkSize": chunk_size,
@@ -481,13 +611,24 @@ def stream_encrypt_file(
 def stream_decrypt_file(
     data_path: str,
     payload: Dict[str, Any],
-    pin: str,
+    pin: Optional[str] = None,
     out_path: Optional[str] = None,
     keyfile: Optional[bytes] = None,
+    private_key: Optional[X25519PrivateKey] = None,
 ) -> Optional[bytes]:
     """Verify and decrypt a streaming sidecar. Returns bytes if out_path is None."""
-    key = derive_key(pin, _unb64(payload["salt"]), payload["kdf"],
-                     payload.get("kdfparams"), keyfile)
+    if payload.get("mode") == "recipient":
+        if private_key is None:
+            raise ValueError("this file needs its X25519 private key")
+        shared = private_key.exchange(
+            X25519PublicKey.from_public_bytes(_unb64(payload["eph"])))
+        key = _recipient_key(shared, pin if payload.get("pin") else None, keyfile,
+                             _unb64(payload["salt"]))
+    else:
+        if pin is None:
+            raise ValueError("a PIN is required")
+        key = derive_key(pin, _unb64(payload["salt"]), payload["kdf"],
+                         payload.get("kdfparams"), keyfile)
     aes = AESGCM(key)
     base_iv = _unb64(payload["baseiv"])
     chunk_size = int(payload["chunkSize"])
@@ -539,7 +680,7 @@ def render_viewer(payload: Dict[str, Any], template: Optional[str] = None) -> st
     return tpl.replace(PAYLOAD_PLACEHOLDER, json.dumps(payload, separators=(",", ":")))
 
 
-def stream_encrypt_bytes(data: Source, pin: str, **kwargs: Any):
+def stream_encrypt_bytes(data: Source, pin: Optional[str] = None, **kwargs: Any):
     """Convenience wrapper: returns ``(payload, sidecar_bytes)`` for small inputs."""
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:

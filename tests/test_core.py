@@ -22,9 +22,14 @@ from lockhtml.core import (
     decrypt,
     encrypt,
     extract_payload,
+    generate_recipient_key,
     generate_signing_key,
+    load_recipient_key,
+    parse_recipient_public,
     public_key_bytes,
+    recipient_public_bytes,
     render_viewer,
+    save_recipient_key,
     stream_decrypt_file,
     stream_encrypt_bytes,
     try_decoy,
@@ -186,7 +191,7 @@ def test_extract_payload_invalid():
 
 
 def test_version():
-    assert __version__ == "1.2.0"
+    assert __version__ == "1.3.0"
 
 
 # --- CLI -------------------------------------------------------------------
@@ -359,6 +364,150 @@ def test_render_viewer_embeds_payload():
     html = render_viewer(payload)
     assert "__PAYLOAD__" not in html
     assert extract_payload(html)["container"] == "stream"
+
+
+# --- X25519 recipient mode -------------------------------------------------
+
+def _recipient():
+    key = generate_recipient_key()
+    return key, recipient_public_bytes(key)
+
+
+def test_recipient_round_trip():
+    key, pub = _recipient()
+    payload = encrypt(DOC, recipient=pub)
+    assert payload["mode"] == "recipient"
+    assert payload["kdf"] == "x25519-hkdf"
+    assert payload["pin"] is False
+    assert len(base64.b64decode(payload["eph"])) == 32
+    assert decrypt(payload, private_key=key) == DOC.encode()
+
+
+def test_recipient_requires_private_key():
+    _, pub = _recipient()
+    payload = encrypt(DOC, recipient=pub)
+    with pytest.raises(Exception):
+        decrypt(payload)                      # no private key supplied
+
+
+def test_recipient_wrong_key_fails():
+    _, pub = _recipient()
+    other, _ = _recipient()
+    payload = encrypt(DOC, recipient=pub)
+    with pytest.raises(Exception):
+        decrypt(payload, private_key=other)
+
+
+def test_recipient_with_pin():
+    key, pub = _recipient()
+    payload = encrypt(DOC, "4821", recipient=pub)
+    assert payload["pin"] is True
+    assert decrypt(payload, "4821", private_key=key) == DOC.encode()
+    with pytest.raises(Exception):
+        decrypt(payload, "0000", private_key=key)     # wrong PIN
+    with pytest.raises(Exception):
+        decrypt(payload, private_key=key)              # missing PIN
+
+
+def test_recipient_with_keyfile():
+    key, pub = _recipient()
+    kf = b"recipient-keyfile"
+    payload = encrypt(DOC, recipient=pub, keyfile=kf)
+    assert decrypt(payload, keyfile=kf, private_key=key) == DOC.encode()
+    with pytest.raises(Exception):
+        decrypt(payload, private_key=key)              # missing keyfile
+
+
+def test_recipient_ephemeral_is_random():
+    _, pub = _recipient()
+    a, b = encrypt(DOC, recipient=pub), encrypt(DOC, recipient=pub)
+    assert a["eph"] != b["eph"]
+
+
+def test_recipient_decoy_not_allowed():
+    _, pub = _recipient()
+    with pytest.raises(ValueError):
+        encrypt(DOC, recipient=pub, decoy=("x", "y"))
+
+
+def test_recipient_signed():
+    key, pub = _recipient()
+    signer = generate_signing_key()
+    payload = encrypt(DOC, recipient=pub, sign_key=signer)
+    assert verify_signature(payload) is True
+    assert decrypt(payload, private_key=key) == DOC.encode()
+
+
+def test_recipient_key_files(tmp_path):
+    key = generate_recipient_key()
+    path = tmp_path / "rec.pem"
+    save_recipient_key(key, str(path))
+    loaded = load_recipient_key(str(path))
+    assert recipient_public_bytes(loaded) == recipient_public_bytes(key)
+
+
+def test_parse_recipient_public_forms():
+    key, pub = _recipient()
+    b64 = base64.b64encode(pub).decode()
+    assert parse_recipient_public(b64) == pub
+    assert parse_recipient_public(b64 + "\n") == pub
+    with pytest.raises(Exception):
+        parse_recipient_public(base64.b64encode(b"too short").decode())
+
+
+def test_recipient_stream_round_trip(tmp_path):
+    key, pub = _recipient()
+    data = os.urandom(150_000)
+    payload, sidecar = stream_encrypt_bytes(data, recipient=pub, chunk_size=65536)
+    assert payload["mode"] == "recipient"
+    p = _sidecar(tmp_path, payload, sidecar)
+    assert stream_decrypt_file(str(p), payload, private_key=key) == data
+    with pytest.raises(Exception):
+        stream_decrypt_file(str(p), payload)           # no key
+
+
+def test_recipient_stream_with_pin(tmp_path):
+    key, pub = _recipient()
+    data = os.urandom(100_000)
+    payload, sidecar = stream_encrypt_bytes(data, "4821", recipient=pub, chunk_size=65536)
+    p = _sidecar(tmp_path, payload, sidecar)
+    assert stream_decrypt_file(str(p), payload, "4821", private_key=key) == data
+    with pytest.raises(Exception):
+        stream_decrypt_file(str(p), payload, "0000", private_key=key)
+
+
+def test_recipient_stream_metadata_tamper(tmp_path):
+    key, pub = _recipient()
+    payload, sidecar = stream_encrypt_bytes(os.urandom(1000), recipient=pub)
+    payload["eph"] = base64.b64encode(os.urandom(32)).decode()
+    with pytest.raises(Exception):
+        stream_decrypt_file(str(_sidecar(tmp_path, payload, sidecar)), payload, private_key=key)
+
+
+def test_cli_recipient(tmp_path):
+    assert run_cli("keygen", "--type", "x25519", "-o", "rec.pem", cwd=tmp_path).returncode == 0
+    assert (tmp_path / "rec.pem").is_file() and (tmp_path / "rec.pub").is_file()
+    src = tmp_path / "doc.html"
+    src.write_text(DOC, encoding="utf-8")
+    out = tmp_path / "doc.locked.html"
+    r = run_cli("lock", str(src), "--to", "rec.pub", "-o", str(out), cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert extract_payload(out.read_text(encoding="utf-8"))["mode"] == "recipient"
+
+    plain = tmp_path / "back.html"
+    r = run_cli("unlock", str(out), "--key", "rec.pem", "-o", str(plain), cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert plain.read_text(encoding="utf-8") == DOC
+
+    # a different key must fail
+    run_cli("keygen", "--type", "x25519", "-o", "other.pem", cwd=tmp_path)
+    assert run_cli("unlock", str(out), "--key", "other.pem", cwd=tmp_path).returncode == 1
+
+
+def test_cli_requires_pin_or_recipient(tmp_path):
+    src = tmp_path / "doc.html"
+    src.write_text(DOC, encoding="utf-8")
+    assert run_cli("lock", str(src), cwd=tmp_path).returncode == 2
 
 
 def test_cli_stream(tmp_path):

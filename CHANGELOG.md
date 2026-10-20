@@ -4,6 +4,29 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-10-20
+
+### Added
+- **X25519 recipient mode** — lock a file to someone's public key so only they can open it, with no
+  shared secret. `keygen --type x25519` produces a private key (`.pem`) and a public key (`.pub`).
+- `lock --to <public key>` to lock to a recipient, and `unlock --key <private key>` to open one.
+- An optional **PIN layered on top** of the recipient key (two factors), and the usual optional
+  keyfile pepper.
+- Recipient mode works in the **streaming container** as well, so large files can be sent to a
+  specific person.
+- GUI support: a recipient public-key field on the lock tab, and a private-key prompt on unlock.
+
+### Changed
+- `encrypt`, `decrypt`, `unlock`, `build_locked_html`, `stream_encrypt_file` and
+  `stream_decrypt_file` take `pin=None` plus a `recipient` / `private_key` argument.
+- `--pin` is no longer required on `lock`/`unlock` (a recipient key can replace it).
+- The streaming MAC now also covers the ephemeral key in recipient mode (PIN-mode sidecars are
+  unchanged, so v1.2 files still verify).
+
+### Security
+- Hybrid encryption with a fresh ephemeral keypair per file; HKDF-SHA256 over the shared secret.
+- The decoy PIN is rejected in recipient mode rather than silently ignored.
+
 ## [1.2.0] - 2026-10-20
 
 ### Added
@@ -65,5 +88,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-platform CLI and a single-file browser GUI.
 - GitHub Actions CI (Linux/Windows/macOS, Python 3.9–3.12) and GitHub Pages deployment.
 
+[1.3.0]: https://github.com/drsamonline/lockhtml/releases/tag/v1.3.0
 [1.1.0]: https://github.com/drsamonline/lockhtml/releases/tag/v1.1.0
 [1.0.0]: https://github.com/drsamonline/lockhtml/releases/tag/v1.0.0

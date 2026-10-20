@@ -181,6 +181,8 @@
           <span class="state" id="kfState"></span>
           <input type="file" id="keyfileInput" hidden>
         </div>
+        <label class="fld" for="recipientPub" data-i18n="recipientPub">Recipient public key (X25519, base64) — lock to a person instead of a PIN</label>
+        <input type="text" id="recipientPub" placeholder="optional — leave blank for PIN mode">
         <label class="fld" for="decoyPin" data-i18n="decoyPin">Duress PIN (opens a harmless decoy page)</label>
         <input type="password" id="decoyPin" placeholder="optional">
       </div>
@@ -213,6 +215,10 @@
     <div class="kfrow" id="dataUnlockRow" style="display:none">
       <span class="state" style="color:var(--warn)" data-i18n="dataNeeded">This file needs its data file (.bin):</span>
       <input type="file" id="dataUnlock">
+    </div>
+    <div class="kfrow" id="keyUnlockRow" style="display:none">
+      <span class="state" style="color:var(--warn)" data-i18n="keyNeeded">This file needs your private key (.pem):</span>
+      <input type="file" id="privkeyUnlock">
     </div>
 
     <div class="actions">
@@ -325,6 +331,42 @@ async function deriveAesKey(pin, salt, kdf, kdfparams, keyfile, usage) {
   return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, usage);
 }
 
+/* ---------- X25519 recipient mode ---------- */
+let guiPriv = null;              // imported X25519 private key, for unlocking
+
+async function importPrivateKeyFile(file) {
+  const text = await file.text();
+  const b64 = text.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
+  return crypto.subtle.importKey("pkcs8", b64ToBytes(b64), { name: "X25519" }, false, ["deriveBits"]);
+}
+async function x25519Shared(privKeyObj, peerPubBytes) {
+  const peer = await crypto.subtle.importKey("raw", peerPubBytes, { name: "X25519" }, false, []);
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: "X25519", public: peer }, privKeyObj, 256));
+}
+async function hkdf32(ikm, salt, info) {
+  const hk = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
+  return new Uint8Array(await crypto.subtle.deriveBits(
+    { name: "HKDF", hash: "SHA-256", salt, info: enc.encode(info) }, hk, 256));
+}
+async function recipientRawFromPrivate(ephB64, pin, keyfile, salt) {
+  const shared = await x25519Shared(guiPriv, b64ToBytes(ephB64));
+  let ikm = shared;
+  if (pin) { const p = enc.encode(pin); const m = new Uint8Array(shared.length + p.length); m.set(shared, 0); m.set(p, shared.length); ikm = m; }
+  let raw = await hkdf32(ikm, salt, "lockhtml/x25519");
+  if (keyfile && keyfile.length) raw = await hmac256(raw, keyfile);
+  return raw;
+}
+async function recipientRawForEncrypt(pubBytes, pin, keyfile, salt) {
+  const eph = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+  const shared = await x25519Shared(eph.privateKey, pubBytes);
+  let ikm = shared;
+  if (pin) { const p = enc.encode(pin); const m = new Uint8Array(shared.length + p.length); m.set(shared, 0); m.set(p, shared.length); ikm = m; }
+  let raw = await hkdf32(ikm, salt, "lockhtml/x25519");
+  if (keyfile && keyfile.length) raw = await hmac256(raw, keyfile);
+  const ephPub = new Uint8Array(await crypto.subtle.exportKey("raw", eph.publicKey));
+  return { raw, eph: bytesToB64(ephPub) };
+}
+
 async function makeBlob(data, pin, kdf, kdfparams, keyfile, usage) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -334,6 +376,19 @@ async function makeBlob(data, pin, kdf, kdfparams, keyfile, usage) {
 }
 
 async function makePayload(bytes, opts) {
+  if (opts.recipient) {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const { raw, eph } = await recipientRawForEncrypt(opts.recipient, opts.pin || null, opts.keyfile, salt);
+    const aesKey = await crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt"]);
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, aesKey, bytes));
+    return { v: 2, kind: opts.kind, name: opts.name || null, mode: "recipient",
+      kdf: "x25519-hkdf", kdfparams: { info: "lockhtml/x25519" }, eph, pin: !!(opts.pin),
+      salt: bytesToB64(salt), iv: bytesToB64(iv), ct: bytesToB64(ct), id: hex(await sha256head(ct)),
+      onetime: !!(opts.oneTime || opts.maxViews === 1), maxviews: opts.maxViews || null,
+      notbefore: opts.notBefore || null, expires: opts.expires || null,
+      watermark: opts.watermark || null, keyfile: !!opts.keyfile, sig: null, decoy: null };
+  }
   const kdfparams = opts.kdf === "argon2id" ? { ...ARGON2_PARAMS } : { iter: PBKDF2_ITER };
   const blob = await makeBlob(bytes, opts.pin, opts.kdf, kdfparams, opts.keyfile, ["encrypt"]);
   const id = hex(await sha256head(blob._ct));
@@ -378,11 +433,14 @@ const STREAM_MAGIC_BYTES = new Uint8Array([0x4c, 0x4b, 0x48, 0x53, 0x31]); // "L
 
 function metaString(p) {
   const kp = p.kdfparams || {};
-  const kps = ("m" in kp) ? (kp.m + "," + kp.t + "," + kp.p) : String(kp.iter);
-  return ["v2", p.kdf, kps, String(p.chunkSize), String(p.chunkCount), String(p.kind),
+  const kps = ("m" in kp) ? (kp.m + "," + kp.t + "," + kp.p)
+          : (("info" in kp) ? String(kp.info) : String(kp.iter));
+  const parts = ["v2", p.kdf, kps, String(p.chunkSize), String(p.chunkCount), String(p.kind),
           (p.name || ""), String(p.salt), String(p.baseiv),
           (p.maxviews == null ? "" : String(p.maxviews)),
-          (p.notbefore || ""), (p.expires || "")].join("|");
+          (p.notbefore || ""), (p.expires || "")];
+  if (p.mode === "recipient") parts.push(p.eph || "");
+  return parts.join("|");
 }
 function equalBytes(a, b) {
   if (a.length !== b.length) return false;
@@ -390,14 +448,23 @@ function equalBytes(a, b) {
   return true;
 }
 async function streamEncrypt(bytes, opts) {
-  const kdfparams = opts.kdf === "argon2id" ? { ...ARGON2_PARAMS } : { iter: PBKDF2_ITER };
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const baseIv = crypto.getRandomValues(new Uint8Array(8));
-  const raw = await rawKey(opts.pin, salt, opts.kdf, kdfparams, opts.keyfile);
+  let raw, modeFields;
+  if (opts.recipient) {
+    const r = await recipientRawForEncrypt(opts.recipient, opts.pin || null, opts.keyfile, salt);
+    raw = r.raw;
+    modeFields = { mode: "recipient", kdf: "x25519-hkdf", kdfparams: { info: "lockhtml/x25519" },
+                   eph: r.eph, pin: !!(opts.pin) };
+  } else {
+    const kdfparams = opts.kdf === "argon2id" ? { ...ARGON2_PARAMS } : { iter: PBKDF2_ITER };
+    raw = await rawKey(opts.pin, salt, opts.kdf, kdfparams, opts.keyfile);
+    modeFields = { mode: "pin", kdf: opts.kdf, kdfparams, eph: null, pin: true };
+  }
   const aesKey = await crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt"]);
   const cs = opts.chunkSize, n = Math.max(1, Math.ceil(bytes.length / cs));
   const payload = {
-    v: 2, container: "stream", kind: opts.kind, name: opts.name || null, kdf: opts.kdf, kdfparams,
+    v: 2, container: "stream", kind: opts.kind, name: opts.name || null, ...modeFields,
     salt: bytesToB64(salt), baseiv: bytesToB64(baseIv), chunkSize: cs, chunkCount: n,
     data: opts.dataName, onetime: !!(opts.oneTime || opts.maxViews === 1), maxviews: opts.maxViews || null,
     notbefore: opts.notBefore || null, expires: opts.expires || null, watermark: opts.watermark || null,
@@ -423,7 +490,9 @@ async function streamEncrypt(bytes, opts) {
 }
 async function streamDecrypt(dataFile, payload, pin, keyfile) {
   const kdfparams = payload.kdfparams || { iter: PBKDF2_ITER };
-  const raw = await rawKey(pin, b64ToBytes(payload.salt), payload.kdf || "pbkdf2", kdfparams, keyfile);
+  const raw = payload.mode === "recipient"
+    ? await recipientRawFromPrivate(payload.eph, pin, keyfile, b64ToBytes(payload.salt))
+    : await rawKey(pin, b64ToBytes(payload.salt), payload.kdf || "pbkdf2", kdfparams, keyfile);
   const aesKey = await crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["decrypt"]);
   const head = new Uint8Array(await dataFile.slice(0, 5).arrayBuffer());
   if (!equalBytes(head, STREAM_MAGIC_BYTES)) throw new Error("not a LockHTML stream container");
@@ -535,14 +604,27 @@ $("keyfileInput").addEventListener("change", async () => {
 
 $("lockBtn").addEventListener("click", async () => {
   const pin = $("pinLock").value;
-  if (!pin || lockFiles.length === 0) return;
+  const rpub = $("recipientPub").value.trim();
+  if (lockFiles.length === 0) return;
+  if (!pin && !rpub) {
+    $("statusLock").className = "status err";
+    $("statusLock").textContent = "Enter a PIN, or a recipient public key.";
+    return;
+  }
   if ($("useKeyfile").checked && !keyfileBytes) {
     $("statusLock").className = "status err";
     $("statusLock").textContent = "Generate or choose a keyfile first.";
     return;
   }
+  let recipientBytes = null;
+  if (rpub) {
+    try { recipientBytes = b64ToBytes(rpub.replace(/\s+/g, "")); }
+    catch (e) { $("statusLock").className = "status err"; $("statusLock").textContent = "That public key is not valid base64."; return; }
+    if (recipientBytes.length !== 32) { $("statusLock").className = "status err"; $("statusLock").textContent = "An X25519 public key must be 32 bytes."; return; }
+  }
   const opts = {
-    pin, kdf: $("kdf").value, keyfile: $("useKeyfile").checked ? keyfileBytes : null,
+    pin, recipient: recipientBytes,
+    kdf: $("kdf").value, keyfile: $("useKeyfile").checked ? keyfileBytes : null,
     oneTime: $("oneTime").checked, stream: $("streamMode").checked,
     maxViews: $("maxViews").value ? parseInt($("maxViews").value, 10) : null,
     notBefore: $("notBefore").value ? new Date($("notBefore").value).toISOString() : null,
@@ -617,16 +699,28 @@ $("unlockBtn").addEventListener("click", async () => {
     const payload = extractPayload(html);
     if (payload.keyfile) $("kfUnlockRow").style.display = "flex";
     if (payload.container === "stream") $("dataUnlockRow").style.display = "flex";
+    if (payload.mode === "recipient") $("keyUnlockRow").style.display = "flex";
     let keyfile = null;
     if (payload.keyfile) {
       const kf = $("keyfileUnlock").files[0];
       if (!kf) { $("statusUnlock").className = "status err"; $("statusUnlock").textContent = "This file needs its keyfile."; return; }
       keyfile = new Uint8Array(await kf.arrayBuffer());
     }
+    if (payload.mode === "recipient") {
+      const pk = $("privkeyUnlock").files[0];
+      if (!pk) { $("statusUnlock").className = "status err"; $("statusUnlock").textContent = "This file needs your private key."; return; }
+      try { guiPriv = await importPrivateKeyFile(pk); }
+      catch (e) { $("statusUnlock").className = "status err"; $("statusUnlock").textContent = "That is not a valid X25519 private key."; return; }
+    }
     if (payload.container === "stream") {
       const df = $("dataUnlock").files[0];
       if (!df) { $("statusUnlock").className = "status err"; $("statusUnlock").textContent = "This file needs its data file (.bin)."; return; }
       unlockBuf = await streamDecrypt(df, payload, pin, keyfile);
+    } else if (payload.mode === "recipient") {
+      const raw = await recipientRawFromPrivate(payload.eph, payload.pin ? pin : null, keyfile, b64ToBytes(payload.salt));
+      const key = await crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["decrypt"]);
+      const buf = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64ToBytes(payload.iv) }, key, b64ToBytes(payload.ct));
+      unlockBuf = new Uint8Array(buf);
     } else {
       const kdf = payload.kdf || "PBKDF2-SHA256";
       const kdfparams = payload.kdfparams || (payload.iter ? { iter: payload.iter } : { iter: PBKDF2_ITER });

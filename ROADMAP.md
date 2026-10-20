@@ -19,6 +19,13 @@ Legend: ✅ shipped · 🔜 planned · 💭 under consideration
 - ✅ Payload format v2 with a written spec
 - ✅ Build-time minification with verification
 
+## Shipped in v1.3
+
+- ✅ **X25519 recipient mode** — lock to a public key, no shared secret (embedded + streaming)
+- ✅ Optional PIN layered on top of the recipient key
+- ✅ `keygen --type x25519`, `lock --to`, `unlock --key`
+- ✅ GUI recipient field and private-key prompt
+
 ## Shipped in v1.2
 
 - ✅ **Streaming container** for very large files (chunked AES-GCM, O(chunk) memory)
@@ -31,8 +38,6 @@ Legend: ✅ shipped · 🔜 planned · 💭 under consideration
 
 ### 🔜 Cryptography
 - **Shamir secret sharing** — split the unlock key so *k* of *n* holders must combine.
-- **X25519 public-key mode** — lock to a recipient's public key, no shared secret. Web Crypto
-  exposes X25519 natively in current browsers, so no WASM is needed.
 - **Auto-calibrated KDF cost** — measure the device and pick the strongest parameters it can handle
   in a fixed time budget, stored per file.
 - **Hidden volume** — a decoy and a real payload in one file with plausible deniability.

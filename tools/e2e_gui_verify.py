@@ -11,6 +11,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
+from cryptography.hazmat.primitives import serialization  # noqa: E402
+
 from lockhtml.core import extract_payload, stream_decrypt_file, unlock  # noqa: E402
 
 MARK = "ORION-7742 GUI"
@@ -35,6 +37,22 @@ def main() -> int:
         fh.write(base64.b64decode(open(j("gui_stream.bin.b64")).read()))
     got = stream_decrypt_file(sidecar, payload, "4821").decode()
     checks.append(("gui_stream.html", MARK in got and payload["container"] == "stream"))
+
+    # recipient (X25519) files, locked by the browser, opened with the Python core
+    priv = serialization.load_der_private_key(
+        base64.b64decode(open(j("gui_recip_priv.b64")).read()), password=None)
+    rtext = open(j("gui_recip.html")).read()
+    rpayload = extract_payload(rtext)
+    got = unlock(rtext, private_key=priv).decode()
+    checks.append(("gui_recip.html", MARK in got and rpayload["mode"] == "recipient"))
+
+    rhtml = open(j("gui_recip_stream.html")).read()
+    rsp = extract_payload(rhtml)
+    rside = j("gui_recip_stream.bin")
+    with open(rside, "wb") as fh:
+        fh.write(base64.b64decode(open(j("gui_recip_stream.bin.b64")).read()))
+    got = stream_decrypt_file(rside, rsp, private_key=priv).decode()
+    checks.append(("gui_recip_stream.html", MARK in got and rsp["mode"] == "recipient"))
 
     for name, ok in checks:
         print(f"{'PASS' if ok else 'FAIL'} {name}")

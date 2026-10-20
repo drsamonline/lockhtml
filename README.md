@@ -34,6 +34,7 @@ put on a USB stick — and the GUI works **offline** once loaded.
 ## ✨ Features
 
 - 🔐 **Argon2id** (memory-hard) by default, with **PBKDF2-SHA256** as a lighter alternative.
+- 🔑 **Recipient mode (X25519)** — lock a file to someone's *public key* so only they can open it, with no shared secret; add a PIN on top if you want two factors.
 - 🧂 **Keyfile support** — optionally require a second file in addition to the PIN.
 - ✍️ **Ed25519 signing** — sign a locked file so recipients can verify it came from you and wasn't altered.
 - 🎭 **Duress PIN** — a second PIN that opens a harmless decoy document instead.
@@ -76,6 +77,11 @@ lockhtml lock report.html --pin 4821 --keyfile team.key
 # Sign it so the recipient can verify authenticity
 lockhtml keygen -o sign.pem
 lockhtml lock report.html --pin 4821 --sign sign.pem
+
+# Lock to a person's public key (no shared secret)
+lockhtml keygen --type x25519 -o alice.pem      # writes alice.pem + alice.pub
+lockhtml lock report.html --to alice.pub -o report.locked.html
+lockhtml unlock report.locked.html --key alice.pem
 
 # Add a duress PIN that opens a decoy page
 lockhtml lock report.html --pin 4821 --decoy-pin 0000
@@ -138,6 +144,19 @@ The full format is documented in [`docs/FORMAT.md`](docs/FORMAT.md). The CLI (Py
 (JavaScript) implement the same format, so files lock and unlock interchangeably across both —
 enforced by CI on every push.
 
+### 🔑 Recipient mode
+
+Instead of a shared PIN you can lock a file to someone's **X25519 public key**, so only the holder of
+the matching private key can open it. A fresh ephemeral keypair is generated per file, the ECDH
+secret goes through HKDF-SHA256, and the result encrypts the file with AES-256-GCM. Because the
+shared secret is already 256 bits of entropy, no slow KDF is applied on top — and you can still layer
+a PIN (and a keyfile) on top for two factors. It works in the streaming container too.
+
+```bash
+lockhtml keygen --type x25519 -o alice.pem   # private (keep) + alice.pub (hand out)
+lockhtml lock big.mp4 --to alice.pub --stream
+```
+
 ### 📦 Containers and size limits
 
 The default **embedded** container puts the ciphertext inside the HTML as base64. That is the most
@@ -179,6 +198,7 @@ after the first fetch.
 | Property | Guarantee |
 | --- | --- |
 | Content unreadable without PIN | ✅ Strong (AES-256-GCM + Argon2id) |
+| Content unreadable without the private key | ✅ Strong (X25519 + HKDF) |
 | Wrong PIN rejected | ✅ Strong (authenticated encryption) |
 | Keyfile required as a second factor | ✅ Strong (pepper) |
 | Authenticity (sender identity) | ✅ Strong when signed (Ed25519) |

@@ -35,6 +35,9 @@ put on a USB stick — and the GUI works **offline** once loaded.
 
 - 🔐 **Argon2id** (memory-hard) by default, with **PBKDF2-SHA256** as a lighter alternative.
 - 🔑 **Recipient mode (X25519)** — lock a file to someone's *public key* so only they can open it, with no shared secret; add a PIN on top if you want two factors.
+- 🕳️ **Hidden volume** — a second PIN that opens entirely different content, so the file has a plausible cover story.
+- 🎛️ **Auto-calibrated KDF** — `--auto-kdf` times this machine and picks the strongest Argon2id cost that still unlocks quickly.
+- 🐢 **Constant-memory save** — for large streaming files, decrypt straight to disk chunk-by-chunk (Chromium), instead of building the whole file in memory.
 - 🧩 **Shamir secret sharing** — split the key into *n* shares so any *k* holders (and no fewer) can open it. Give five people a share; any three can open it.
 - 🧂 **Keyfile support** — optionally require a second file in addition to the PIN.
 - ✍️ **Ed25519 signing** — sign a locked file so recipients can verify it came from you and wasn't altered.
@@ -90,6 +93,13 @@ lockhtml lock report.html --pin 4821 --decoy-pin 0000
 # Split the key: 5 shares, any 3 open it
 lockhtml lock report.html --shares 5:3
 lockhtml unlock report.locked.html --shares report.locked.shares.txt
+
+# Hide the real file behind a cover, and tune the KDF to this machine
+lockhtml lock cover.html --pin 4821 --hidden-pin 0000 --hidden-file real.html --auto-kdf
+lockhtml unlock cover.locked.html --pin 0000     # opens the hidden content
+
+# Lock a whole folder
+lockhtml lock ./contracts --recursive --pin 4821 --outdir ./locked
 
 # Large file: streaming container (viewer + sidecar .bin, constant memory)
 lockhtml lock holiday.mp4 --pin 4821 --stream
@@ -175,6 +185,33 @@ lockhtml lock report.html --shares 5:3      # writes report.locked.html + report
 lockhtml unlock report.locked.html --shares some-three.txt
 lockhtml unlock report.locked.html --share <b64> --share <b64> --share <b64>
 ```
+
+### 🚀 Launchers (no install needed)
+
+The repo ships small launcher scripts that run the CLI straight from the checkout — handy on a
+machine where you have not `pip install`ed anything:
+
+| Platform | CLI | GUI |
+| --- | --- | --- |
+| Linux / macOS | `./lockhtml.sh …` (or `sh lockhtml.sh …`) | `./gui.sh` |
+| Windows | `lockhtml.bat …` | `gui.bat` |
+
+They find Python 3.9+, prefer a local `.venv`, check the two dependencies, and give a clear message
+if something is missing. On Windows the `.bat` files are directly runnable; on Unix, mark them
+executable once with `chmod +x lockhtml.sh gui.sh` (or just run them through `sh`).
+
+### 🕳️ Hidden volume
+
+A locked file can carry more than one payload. The **cover** content opens with the main PIN, and a
+second PIN opens **hidden** content — different bytes entirely, with no indication in the file that
+it exists. This is the same idea as the duress PIN, generalised: you can add several hidden slots.
+
+```bash
+lockhtml lock cover.html --pin 4821 --hidden-pin 0000 --hidden-file real.html
+```
+
+A hidden volume is **plausible deniability, not proof of absence**: someone who knows the format can
+see that extra encrypted slots exist, they just cannot read them. See [SECURITY.md](SECURITY.md).
 
 ### 📦 Containers and size limits
 

@@ -4,6 +4,35 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-10-20
+
+### Added
+- **Hidden volume** — a second (or third…) PIN that opens entirely different content, so the file has
+  a plausible cover story. `lock --hidden-pin PIN --hidden-file FILE` (repeatable).
+- **Auto-calibrated KDF** — `calibrate` measures the machine and `--auto-kdf` uses the strongest
+  Argon2id time cost that still unlocks in a sensible time; the parameters travel in the file.
+- **Streaming decoy** — a duress PIN now works on streaming containers too: it opens a small embedded
+  page instead of decrypting the sidecar.
+- **Folder support** — `lock --recursive DIR` (CLI) and a folder picker / directory drop in the GUI.
+- **Constant-memory save** — the viewer can decrypt a streaming container straight to disk, chunk by
+  chunk, using the File System Access API (Chromium); other browsers keep the Blob download.
+- **Launcher scripts** — `lockhtml.sh` / `lockhtml.bat` and `gui.sh` / `gui.bat`, plus
+  `requirements.txt`, so the tool runs from a checkout with no install step.
+- `decrypt_any()` in the core, which reports whether the main payload, a hidden slot or the decoy
+  opened.
+
+### Changed
+- The viewer and core now try the main payload, then every hidden slot, then the decoy.
+- The streaming MAC also covers the decoy blob when one is present (older sidecars still verify).
+- Streaming encryption was factored into `_stream_write` so all key modes share one code path.
+
+### Fixed
+- The browser end-to-end harness now recycles the page (and relaunches Chrome if it dies) so a long
+  run in a memory-tight container cannot fail spuriously.
+
+### Notes
+- `age` interop is **not** in this release — see [ROADMAP.md](ROADMAP.md) for why and what is planned.
+
 ## [1.4.0] - 2026-10-20
 
 ### Added
@@ -109,6 +138,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-platform CLI and a single-file browser GUI.
 - GitHub Actions CI (Linux/Windows/macOS, Python 3.9–3.12) and GitHub Pages deployment.
 
+[2.0.0]: https://github.com/drsamonline/lockhtml/releases/tag/v2.0.0
 [1.4.0]: https://github.com/drsamonline/lockhtml/releases/tag/v1.4.0
 [1.3.0]: https://github.com/drsamonline/lockhtml/releases/tag/v1.3.0
 [1.1.0]: https://github.com/drsamonline/lockhtml/releases/tag/v1.1.0

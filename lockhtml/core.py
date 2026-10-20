@@ -45,6 +45,7 @@ import json
 import math
 import os
 import re
+import time
 from datetime import datetime, timezone
 from importlib import resources
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -146,8 +147,34 @@ def derive_key(
 
 
 # --------------------------------------------------------------------------- #
+# auto-calibrated KDF cost
+# --------------------------------------------------------------------------- #
+# Argon2id is memory-hard, but a fixed time cost is wrong on both a phone and a
+# workstation. ``calibrate_argon2`` times one pass on this machine and scales the
+# time cost so a single derivation takes about ``target_seconds``.
+
+DEFAULT_KDF_SECONDS = 0.5
+
+
+def calibrate_argon2(
+    target_seconds: float = DEFAULT_KDF_SECONDS,
+    memory_kib: int = ARGON2_PARAMS["m"],
+    parallelism: int = ARGON2_PARAMS["p"],
+) -> Dict[str, int]:
+    """Measure this machine and return argon2id params for ~``target_seconds``."""
+    salt, secret = b"\x00" * 16, b"\x01" * 16
+    started = time.perf_counter()
+    _argon2_raw(secret, salt, time_cost=1, memory_cost=memory_kib,
+                parallelism=parallelism, hash_len=32, type=_Argon2Type.ID)
+    elapsed = max(time.perf_counter() - started, 1e-4)
+    time_cost = int(round(target_seconds / elapsed))
+    return {"m": int(memory_kib), "t": max(1, min(64, time_cost)), "p": int(parallelism)}
+
+
+# --------------------------------------------------------------------------- #
 # Ed25519 signing
 # --------------------------------------------------------------------------- #
+
 def generate_signing_key() -> Ed25519PrivateKey:
     return Ed25519PrivateKey.generate()
 
@@ -451,10 +478,11 @@ def encrypt(
     name: Optional[str] = None,
     sign_key: Optional[Ed25519PrivateKey] = None,
     decoy: Optional[Decoy] = None,
+    hidden: Optional[List[Tuple[str, Source]]] = None,
 ) -> Dict[str, Any]:
     """Encrypt ``data`` under a PIN, or to a recipient's X25519 public key."""
-    if decoy is not None and recipient is not None:
-        raise ValueError("the decoy PIN is only available in PIN mode")
+    if recipient is not None and (decoy is not None or hidden):
+        raise ValueError("extra PIN slots are only available in PIN mode")
 
     if recipient is not None:
         eph = X25519PrivateKey.generate()
@@ -511,6 +539,16 @@ def encrypt(
             "salt": d["salt"], "iv": d["iv"], "ct": d["ct"],
         }
 
+    if hidden:
+        slots = []
+        for hidden_pin, hidden_data in hidden:
+            s = _encrypt_blob(_as_bytes(hidden_data), hidden_pin, kdf, kdfparams, keyfile)
+            slots.append({
+                "kdf": kdf, "kdfparams": dict(kdfparams),
+                "salt": s["salt"], "iv": s["iv"], "ct": s["ct"],
+            })
+        payload["slots"] = slots
+
     return payload
 
 
@@ -565,6 +603,30 @@ def try_decoy(payload: Dict[str, Any], pin: str, keyfile: Optional[bytes] = None
         return None
 
 
+def decrypt_any(payload: Dict[str, Any], pin: str, keyfile: Optional[bytes] = None
+                ) -> Tuple[bytes, str]:
+    """Try the main payload, then every hidden slot, then the decoy.
+
+    Returns ``(plaintext, which)`` where ``which`` is ``"main"``, ``"slot<n>"`` or
+    ``"decoy"``. Raises ``ValueError`` if the PIN opens nothing.
+    """
+    for name, blob in _all_blobs(payload):
+        try:
+            return _decrypt_blob(blob, pin, keyfile), name
+        except Exception:
+            continue
+    raise ValueError("wrong PIN")
+
+
+def _all_blobs(payload: Dict[str, Any]):
+    """Yield ``(name, blob)`` for the main payload, hidden slots and the decoy."""
+    yield "main", payload
+    for i, slot in enumerate(payload.get("slots") or []):
+        yield f"slot{i}", slot
+    if payload.get("decoy"):
+        yield "decoy", payload["decoy"]
+
+
 # --------------------------------------------------------------------------- #
 # locked-file assembly
 # --------------------------------------------------------------------------- #
@@ -604,8 +666,17 @@ def unlock(locked_html: str, pin: Optional[str] = None,
            keyfile: Optional[bytes] = None,
            private_key: Optional[X25519PrivateKey] = None,
            shares: Optional[List[str]] = None) -> bytes:
-    """Decrypt a locked HTML document back to its original plaintext bytes."""
-    return decrypt(extract_payload(locked_html), pin, keyfile, private_key, shares)
+    """Decrypt a locked HTML document back to its original plaintext bytes.
+
+    In PIN mode this also opens hidden slots and the duress decoy, whichever the
+    PIN unlocks first (main payload, then slots, then decoy).
+    """
+    payload = extract_payload(locked_html)
+    if payload.get("container") != "stream" and payload.get("mode") in (None, "pin"):
+        if pin is None:
+            raise ValueError("a PIN is required")
+        return decrypt_any(payload, pin, keyfile)[0]
+    return decrypt(payload, pin, keyfile, private_key, shares)
 
 
 # --------------------------------------------------------------------------- #
@@ -665,9 +736,11 @@ def _meta_string(payload: Dict[str, Any]) -> str:
         str(payload.get("notbefore") or ""),
         str(payload.get("expires") or ""),
     ]
-    # Appended only in recipient mode, so v1.2 PIN-mode sidecars still verify.
+    # Appended only when present, so older PIN-mode sidecars still verify.
     if payload.get("mode") == "recipient":
         parts.append(str(payload.get("eph") or ""))
+    if payload.get("decoy"):
+        parts.append(str(payload["decoy"].get("ct") or ""))
     return "|".join(parts)
 
 
@@ -697,6 +770,7 @@ def _stream_write(
     name: Optional[str],
     sign_key: Optional[Ed25519PrivateKey],
     keyfile: bool,
+    decoy: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Chunk-encrypt ``src_path`` into ``data_path`` and return the viewer payload."""
     if one_time and max_views is None:
@@ -724,7 +798,7 @@ def _stream_write(
         "watermark": watermark,
         "keyfile": bool(keyfile),
         "sig": None,
-        "decoy": None,
+        "decoy": decoy,
         "metamac": None,
         "id": None,
     }
@@ -776,10 +850,13 @@ def stream_encrypt_file(
     kind: str = "file",
     name: Optional[str] = None,
     sign_key: Optional[Ed25519PrivateKey] = None,
+    decoy: Optional[Decoy] = None,
 ) -> Dict[str, Any]:
     """Encrypt a file into a streaming sidecar; returns the payload for the viewer."""
     salt = os.urandom(16)
     base_iv = os.urandom(8)
+    if decoy is not None and recipient is not None:
+        raise ValueError("the decoy PIN is only available in PIN mode")
     if recipient is not None:
         eph = X25519PrivateKey.generate()
         shared = eph.exchange(X25519PublicKey.from_public_bytes(recipient))
@@ -797,11 +874,22 @@ def stream_encrypt_file(
         key = derive_key(pin, salt, kdf, kdfparams, keyfile)
         mode_fields = {"mode": "pin", "kdf": kdf, "kdfparams": dict(kdfparams),
                        "eph": None, "pin": True}
+
+    decoy_blob = None
+    if decoy is not None:
+        decoy_data, decoy_pin = decoy
+        d = _encrypt_blob(_as_bytes(decoy_data), decoy_pin, kdf, kdfparams, keyfile)
+        decoy_blob = {
+            "kdf": kdf, "kdfparams": dict(kdfparams),
+            "salt": d["salt"], "iv": d["iv"], "ct": d["ct"],
+        }
+
     return _stream_write(
         src_path, data_path, key, salt, base_iv, mode_fields,
         chunk_size=chunk_size, one_time=one_time, max_views=max_views,
         not_before=not_before, expires=expires, watermark=watermark,
-        kind=kind, name=name, sign_key=sign_key, keyfile=bool(keyfile))
+        kind=kind, name=name, sign_key=sign_key, keyfile=bool(keyfile),
+        decoy=decoy_blob)
 
 
 def stream_encrypt_shares_file(

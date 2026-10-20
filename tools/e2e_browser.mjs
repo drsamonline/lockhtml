@@ -15,20 +15,57 @@ const DIR = process.argv[2] || "/tmp/lockhtml-e2e";
 const file = (n) => "file://" + path.join(DIR, n);
 const at = (n) => path.join(DIR, n);
 
-const browser = await puppeteer.launch({
+const launch = () => puppeteer.launch({
   executablePath: process.env.CHROME || undefined,
   headless: "new",
-  args: ["--no-sandbox", "--disable-setuid-sandbox", "--allow-file-access-from-files"],
+  args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
+         "--disable-gpu", "--allow-file-access-from-files"],
 });
+let browser = await launch();
 const results = [];
-const ok = (name, cond) => { results.push([name, cond]); console.log((cond ? "PASS " : "FAIL ") + name); };
+let sinceRecycle = 0;
+const ok = (name, cond) => {
+  results.push([name, cond]);
+  sinceRecycle++;
+  console.log((cond ? "PASS " : "FAIL ") + name);
+};
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const page = await browser.newPage();
-await page.setViewport({ width: 900, height: 700 });
-page.on("pageerror", (e) => console.log("  [pageerror]", e.message));
+let page;
+async function freshPage() {
+  // The sandbox is memory-tight, so Chrome can die part-way through a long run.
+  // Relaunch it rather than losing the whole suite.
+  if (!browser.connected) {
+    try { await browser.close(); } catch { /* already gone */ }
+    console.log("  [browser] relaunching");
+    browser = await launch();
+  }
+  if (page) { try { await page.close(); } catch { /* already gone */ } }
+  page = await browser.newPage();
+  await page.setViewport({ width: 900, height: 700 });
+  page.on("pageerror", (e) => console.log("  [pageerror]", e.message));
+  page.on("error", (e) => console.log("  [crash]", e.message));
+}
+await freshPage();
 
-const open = (f) => page.goto(file(f), { waitUntil: "load" });
+// A long run of heavy decrypts can exhaust the renderer; if the frame detaches,
+// start a clean page and carry on rather than failing the whole suite.
+const RECYCLE_EVERY = 4;
+const open = async (f) => {
+  // Each viewer page keeps Argon2 WASM + decrypted buffers alive; recycle the
+  // page regularly so a long run cannot exhaust the renderer.
+  if (sinceRecycle >= RECYCLE_EVERY) { sinceRecycle = 0; await freshPage(); }
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await page.goto(file(f), { waitUntil: "load" });
+    } catch (e) {
+      if (attempt >= 2) throw e;
+      console.log("  [retry] navigation:", String(e.message).split("\n")[0]);
+      await sleep(300);
+      await freshPage();
+    }
+  }
+};
 const type = async (pin) => { await page.type("#pin", pin); await page.click("#unlock"); };
 async function waitStage() {
   try {
@@ -133,6 +170,23 @@ ok("shares: with PIN", (await waitStage()) && (await srcdoc()).includes("ORION-7
 
 await open("sh_stream.html"); await upload("#sharesFile", "sh_stream.shares.txt"); await upload("#datafile", "sh_stream.bin"); await page.click("#unlock");
 ok("shares: streaming bundle", (await waitStage()) && (await vis("dlwrap")));
+
+// ---- hidden volume + streaming decoy ----
+await open("hidden.html"); await type("4821");
+ok("hidden: cover PIN -> cover", (await waitStage()) && (await srcdoc()).includes("COVER-1111"));
+
+await open("hidden.html"); await type("0000");
+ok("hidden: hidden PIN -> real", (await waitStage()) && (await srcdoc()).includes("PISCES-9931"));
+
+await open("hidden.html"); await type("9999");
+ok("hidden: wrong PIN rejected", !(await waitStage()));
+
+await open("hidden_stream.html"); await upload("#datafile", "hidden_stream.bin"); await type("4821");
+ok("stream decoy: real PIN -> download", (await waitStage()) && (await vis("dlwrap")));
+
+await open("hidden_stream.html"); await upload("#datafile", "hidden_stream.bin"); await type("0000");
+ok("stream decoy: decoy PIN -> decoy page",
+   (await waitStage()) && (await srcdoc()).includes("DECOY-PAGE") && !(await vis("dlwrap")));
 
 await browser.close();
 const failed = results.filter((r) => !r[1]).length;

@@ -23,7 +23,9 @@ from lockhtml.core import (
     _gf_mul,
     build_locked_html,
     build_shared_html,
+    calibrate_argon2,
     decrypt,
+    decrypt_any,
     encrypt,
     encrypt_shares,
     extract_payload,
@@ -39,6 +41,7 @@ from lockhtml.core import (
     shamir_split,
     stream_decrypt_file,
     stream_encrypt_bytes,
+    stream_encrypt_file,
     stream_encrypt_shares_file,
     try_decoy,
     unlock,
@@ -199,7 +202,7 @@ def test_extract_payload_invalid():
 
 
 def test_version():
-    assert __version__ == "1.4.0"
+    assert __version__ == "2.0.0"
 
 
 # --- CLI -------------------------------------------------------------------
@@ -679,6 +682,129 @@ def test_cli_shares_stream(tmp_path):
                 "--shares", str(tmp_path / "big.locked.shares.txt"), "-o", str(out), cwd=tmp_path)
     assert r.returncode == 0, r.stderr
     assert out.read_bytes() == src.read_bytes()
+
+
+# --- v2.0: auto-KDF, hidden volumes, streaming decoy, folders -----------------
+
+def test_calibrate_argon2():
+    params = calibrate_argon2(0.05)
+    assert set(params) == {"m", "t", "p"}
+    assert params["m"] == ARGON2_PARAMS["m"]
+    assert 1 <= params["t"] <= 64
+    # the calibrated params must actually work end to end
+    payload = encrypt(DOC, "4821", kdfparams=params)
+    assert decrypt(payload, "4821") == DOC.encode()
+
+
+def test_calibrate_scales_with_target():
+    quick = calibrate_argon2(0.05)
+    slow = calibrate_argon2(0.4)
+    assert slow["t"] >= quick["t"]
+
+
+def test_hidden_volume():
+    cover = "<html><body>COVER-1111</body></html>"
+    real = "<html><body>PISCES-9931</body></html>"
+    html = build_locked_html(cover, "4821", hidden=[("0000", real)])
+    payload = extract_payload(html)
+    assert len(payload["slots"]) == 1
+    assert "PISCES-9931" not in html
+    assert unlock(html, "4821").decode() == cover
+    assert unlock(html, "0000").decode() == real
+    with pytest.raises(Exception):
+        unlock(html, "9999")
+
+
+def test_hidden_volume_multiple_slots():
+    html = build_locked_html(DOC, "4821", hidden=[("0000", "<p>A</p>"), ("1111", "<p>B</p>")])
+    assert unlock(html, "4821").decode() == DOC
+    assert unlock(html, "0000").decode() == "<p>A</p>"
+    assert unlock(html, "1111").decode() == "<p>B</p>"
+
+
+def test_decrypt_any_reports_which():
+    html = build_locked_html(DOC, "4821", hidden=[("0000", "<p>hidden</p>")])
+    payload = extract_payload(html)
+    assert decrypt_any(payload, "4821")[1] == "main"
+    assert decrypt_any(payload, "0000")[1] == "slot0"
+    with pytest.raises(ValueError):
+        decrypt_any(payload, "9999")
+
+
+def test_hidden_rejected_in_recipient_mode():
+    key, pub = _recipient()
+    with pytest.raises(ValueError):
+        encrypt(DOC, recipient=pub, hidden=[("0000", "x")])
+
+
+def test_streaming_decoy(tmp_path):
+    data = os.urandom(120_000)
+    src = tmp_path / "s.bin"
+    src.write_bytes(data)
+    sidecar = tmp_path / "d.bin"
+    payload = stream_encrypt_file(
+        str(src), "4821", str(sidecar), decoy=("<p>DECOY</p>", "0000"), chunk_size=65536)
+    assert payload["decoy"] is not None
+    assert try_decoy(payload, "0000") == b"<p>DECOY</p>"
+    assert try_decoy(payload, "4821") is None
+    assert stream_decrypt_file(str(sidecar), payload, "4821") == data
+
+
+def test_cli_hidden_and_auto_kdf(tmp_path):
+    cover = tmp_path / "cover.txt"
+    cover.write_text("COVER-1111", encoding="utf-8")
+    real = tmp_path / "real.txt"
+    real.write_text("PISCES-9931", encoding="utf-8")
+    r = run_cli("lock", str(cover), "--pin", "4821", "--hidden-pin", "0000",
+                "--hidden-file", str(real), "--auto-kdf", "--kdf-time", "0.05", cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert "auto KDF" in r.stdout
+    locked = tmp_path / "cover.locked.html"
+    assert run_cli("unlock", str(locked), "--pin", "4821", cwd=tmp_path).stdout.strip() == "COVER-1111"
+    assert run_cli("unlock", str(locked), "--pin", "0000", cwd=tmp_path).stdout.strip() == "PISCES-9931"
+
+
+def test_cli_recursive(tmp_path):
+    (tmp_path / "tree" / "sub").mkdir(parents=True)
+    (tmp_path / "tree" / "a.txt").write_text("a", encoding="utf-8")
+    (tmp_path / "tree" / "sub" / "b.txt").write_text("b", encoding="utf-8")
+    assert run_cli("lock", str(tmp_path / "tree"), "--pin", "4821", cwd=tmp_path).returncode == 2
+    outdir = tmp_path / "out"
+    r = run_cli("lock", str(tmp_path / "tree"), "--recursive", "--pin", "4821",
+                "--outdir", str(outdir), cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert sorted(x.name for x in outdir.glob("*.locked.html")) == ["a.locked.html", "b.locked.html"]
+
+
+def test_cli_calibrate(tmp_path):
+    r = run_cli("calibrate", "--seconds", "0.05", cwd=tmp_path)
+    assert r.returncode == 0
+    assert "argon2id" in r.stdout and "m=" in r.stdout
+
+
+def test_cli_stream_decoy(tmp_path):
+    src = tmp_path / "big.bin"
+    src.write_bytes(os.urandom(150_000))
+    r = run_cli("lock", str(src), "--pin", "4821", "--stream", "--decoy-pin", "0000",
+                "--chunk-size", "64", cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    locked = tmp_path / "big.locked.html"
+    sidecar = tmp_path / "big.locked.bin"
+    out = tmp_path / "out.bin"
+    assert run_cli("unlock", str(locked), "--pin", "4821", "--data", str(sidecar),
+                   "-o", str(out), cwd=tmp_path).returncode == 0
+    assert out.read_bytes() == src.read_bytes()
+    duress = run_cli("unlock", str(locked), "--pin", "0000", "--data", str(sidecar), cwd=tmp_path)
+    assert duress.returncode == 0 and "No content" in duress.stdout
+
+
+def test_launchers_present_and_valid():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for name in ("lockhtml.sh", "gui.sh", "lockhtml.bat", "gui.bat", "requirements.txt"):
+        assert os.path.isfile(os.path.join(root, name)), name
+    for sh in ("lockhtml.sh", "gui.sh"):
+        r = subprocess.run(["sh", "-n", os.path.join(root, sh)], capture_output=True)
+        assert r.returncode == 0, r.stderr
 
 
 def test_cli_stream(tmp_path):

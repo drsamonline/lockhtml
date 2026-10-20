@@ -130,6 +130,8 @@
       <div class="big"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
       <div class="t" data-i18n="dropTitle">Drop file(s) here</div>
       <div class="s" data-i18n="dropSub">or click to choose — any file type</div>
+      <div class="s" style="margin-top:6px"><a href="#" id="pickFolder" style="color:#8fa4d6">…or choose a whole folder</a></div>
+      <input type="file" id="folderLock" webkitdirectory directory multiple style="display:none">
       <input type="file" id="fileLock" multiple hidden>
     </div>
     <div class="filelist" id="listLock"></div>
@@ -187,6 +189,10 @@
         <input type="text" id="splitKey" placeholder="optional — leave blank for a single key">
         <label class="fld" for="decoyPin" data-i18n="decoyPin">Duress PIN (opens a harmless decoy page)</label>
         <input type="password" id="decoyPin" placeholder="optional">
+        <label class="fld" for="hiddenPin">Hidden volume — a second PIN that opens different content</label>
+        <input type="password" id="hiddenPin" placeholder="optional">
+        <label class="fld" for="hiddenPick">Hidden content (HTML or text file)</label>
+        <input type="file" id="hiddenPick">
       </div>
     </details>
 
@@ -537,6 +543,13 @@ async function makePayload(bytes, opts) {
     const d = await makeBlob(enc.encode(DECOY_HTML), opts.decoyPin, opts.kdf, kdfparams, opts.keyfile, ["encrypt"]);
     payload.decoy = { kdf: opts.kdf, kdfparams, salt: d.salt, iv: d.iv, ct: d.ct };
   }
+  if (opts.hidden && opts.hidden.length) {
+    payload.slots = [];
+    for (const [hpin, htext] of opts.hidden) {
+      const s = await makeBlob(enc.encode(htext), hpin, opts.kdf, kdfparams, opts.keyfile, ["encrypt"]);
+      payload.slots.push({ kdf: opts.kdf, kdfparams, salt: s.salt, iv: s.iv, ct: s.ct });
+    }
+  }
   return payload;
 }
 async function sha256head(bytes) {
@@ -574,6 +587,7 @@ function metaString(p) {
           (p.maxviews == null ? "" : String(p.maxviews)),
           (p.notbefore || ""), (p.expires || "")];
   if (p.mode === "recipient") parts.push(p.eph || "");
+  if (p.decoy) parts.push((p.decoy && p.decoy.ct) || "");
   return parts.join("|");
 }
 function equalBytes(a, b) {
@@ -668,13 +682,45 @@ document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () =>
 }));
 
 /* ---------- dropzones ---------- */
+function readEntry(entry, out) {
+  return new Promise((resolve) => {
+    if (!entry) return resolve();
+    if (entry.isFile) {
+      entry.file(f => { out.push(f); resolve(); }, () => resolve());
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const all = [];
+      const next = () => reader.readEntries(async (batch) => {
+        if (!batch.length) {
+          for (const e of all) await readEntry(e, out);
+          return resolve();
+        }
+        all.push(...batch); next();
+      }, () => resolve());
+      next();
+    } else resolve();
+  });
+}
+
 function wireDrop(dropId, inputId, onFiles) {
   const drop = $(dropId), input = $(inputId);
   drop.addEventListener("click", () => input.click());
   input.addEventListener("change", () => onFiles([...input.files]));
   ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
   ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
-  drop.addEventListener("drop", e => onFiles([...e.dataTransfer.files]));
+  drop.addEventListener("drop", async e => {
+    const items = e.dataTransfer.items;
+    if (items && items.length && items[0].webkitGetAsEntry) {
+      const entries = [];
+      for (const it of items) { const en = it.webkitGetAsEntry && it.webkitGetAsEntry(); if (en) entries.push(en); }
+      if (entries.some(en => en && en.isDirectory)) {
+        const out = [];
+        for (const en of entries) await readEntry(en, out);
+        if (out.length) return onFiles(out);
+      }
+    }
+    onFiles([...e.dataTransfer.files]);
+  });
 }
 
 /* ---------- LOCK ---------- */
@@ -689,10 +735,18 @@ function renderLockList() {
     rm.addEventListener("click", () => { lockFiles.splice(i, 1); renderLockList(); });
     el.appendChild(rm); box.appendChild(el);
   });
-  $("lockBtn").disabled = lockFiles.length === 0 || !$("pinLock").value;
+  const hasKey = $("pinLock").value || $("recipientPub").value.trim() || $("splitKey").value.trim();
+  $("lockBtn").disabled = lockFiles.length === 0 || !hasKey;
 }
 wireDrop("dropLock", "fileLock", files => {
   for (const f of files) if (!lockFiles.some(x => x.name === f.name && x.size === f.size)) lockFiles.push(f);
+  renderLockList();
+});
+$("pickFolder").addEventListener("click", e => { e.preventDefault(); $("folderLock").click(); });
+$("folderLock").addEventListener("change", () => {
+  for (const f of $("folderLock").files) {
+    if (!lockFiles.some(x => x.name === f.name && x.size === f.size)) lockFiles.push(f);
+  }
   renderLockList();
 });
 
@@ -771,8 +825,15 @@ $("lockBtn").addEventListener("click", async () => {
     catch (e) { $("statusLock").className = "status err"; $("statusLock").textContent = "That public key is not valid base64."; return; }
     if (recipientBytes.length !== 32) { $("statusLock").className = "status err"; $("statusLock").textContent = "An X25519 public key must be 32 bytes."; return; }
   }
+  let hiddenSlots = null;
+  if ($("hiddenPin").value) {
+    const hf = $("hiddenPick").files[0];
+    const htext = hf ? await hf.text()
+      : "<!DOCTYPE html><html><body><p>Nothing here.</p></body></html>";
+    hiddenSlots = [[$("hiddenPin").value, htext]];
+  }
   const opts = {
-    pin, recipient: recipientBytes, split,
+    pin, recipient: recipientBytes, split, hidden: hiddenSlots,
     kdf: $("kdf").value, keyfile: $("useKeyfile").checked ? keyfileBytes : null,
     oneTime: $("oneTime").checked, stream: $("streamMode").checked,
     maxViews: $("maxViews").value ? parseInt($("maxViews").value, 10) : null,

@@ -60,8 +60,8 @@ def main() -> int:
         open(p(fname + ".html"), "w").write(render_viewer(payload))
 
     stream("s_html", DOC.encode(), kdf="pbkdf2", kind="html", chunk_size=65536)
-    stream("s_big", os.urandom(2 * 1024 * 1024), kdf="pbkdf2", kind="file",
-           name="big.bin", chunk_size=262144)
+    stream("s_big", os.urandom(512 * 1024), kdf="pbkdf2", kind="file",
+           name="big.bin", chunk_size=131072)
     stream("s_argon2", os.urandom(300_000), kdf="argon2id", kind="file",
            name="a.bin", chunk_size=65536)
     stream("s_keyfile", os.urandom(200_000), kdf="pbkdf2", kind="file",
@@ -111,6 +111,20 @@ def main() -> int:
                                          n=4, k=2, kind="file", name="sb.bin", chunk_size=65536)
     open(p("sh_stream.html"), "w").write(render_viewer(sp))
     open(p("sh_stream.shares.txt"), "w").write("\n".join(sh3) + "\n")
+
+    # ---- hidden volume + streaming decoy ----
+    cover = "<!DOCTYPE html><html><body><h1>Cover</h1><p>COVER-1111</p></body></html>"
+    real = "<!DOCTYPE html><html><body><h1>Real</h1><p>PISCES-9931</p></body></html>"
+    open(p("hidden.html"), "w").write(build_locked_html(cover, PIN, hidden=[("0000", real)]))
+
+    hsrc = p("hidden_stream.src")
+    with open(hsrc, "wb") as fh:
+        fh.write(os.urandom(200_000))
+    hpl = stream_encrypt_file(
+        hsrc, PIN, p("hidden_stream.bin"),
+        decoy=("<!DOCTYPE html><html><body><p>DECOY-PAGE</p></body></html>", "0000"),
+        kind="file", name="hs.bin", chunk_size=65536)
+    open(p("hidden_stream.html"), "w").write(render_viewer(hpl))
 
     print(f"wrote fixtures to {out}")
     return 0

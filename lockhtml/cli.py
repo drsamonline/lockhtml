@@ -11,10 +11,13 @@ from pathlib import Path
 
 from . import __version__
 from .core import (
+    ARGON2_PARAMS,
     DEFAULT_CHUNK_SIZE,
     DEFAULT_KDF,
+    DEFAULT_KDF_SECONDS,
     build_locked_html,
     build_shared_html,
+    calibrate_argon2,
     extract_payload,
     generate_recipient_key,
     generate_signing_key,
@@ -28,10 +31,16 @@ from .core import (
     stream_decrypt_file,
     stream_encrypt_file,
     stream_encrypt_shares_file,
+    try_decoy,
     unlock,
 )
 
 LOCKED_SUFFIX = ".locked.html"
+HIDDEN_HTML = (
+    "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Document</title></head>"
+    "<body style='font-family:system-ui;max-width:640px;margin:60px auto;color:#222'>"
+    "<h2>Nothing here</h2><p>This document contains nothing further.</p></body></html>"
+)
 DECOY_HTML = (
     "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Document</title></head>"
     "<body style='font-family:system-ui;max-width:640px;margin:60px auto;color:#222'>"
@@ -44,7 +53,20 @@ def _read_bytes(path: Path) -> bytes:
 
 
 def cmd_lock(args: argparse.Namespace) -> int:
-    inputs = [Path(p) for p in args.input]
+    inputs: list = []
+    for raw in args.input:
+        p = Path(raw)
+        if p.is_dir():
+            if not args.recursive:
+                print(f"error: {p} is a directory (pass --recursive to lock the files inside)",
+                      file=sys.stderr)
+                return 2
+            inputs.extend(sorted(x for x in p.rglob("*") if x.is_file()))
+        else:
+            inputs.append(p)
+    if not inputs:
+        print("error: nothing to lock", file=sys.stderr)
+        return 2
     missing = [p for p in inputs if not p.is_file()]
     if missing:
         for p in missing:
@@ -89,6 +111,26 @@ def cmd_lock(args: argparse.Namespace) -> int:
         decoy_doc = Path(args.decoy_file).read_text(encoding="utf-8") if args.decoy_file else DECOY_HTML
         decoy = (decoy_doc, args.decoy_pin)
 
+    hidden = None
+    if args.hidden_pin:
+        if args.stream:
+            print("error: --hidden-pin is not available with --stream", file=sys.stderr)
+            return 2
+        if share_spec is not None or recipient is not None:
+            print("error: --hidden-pin is only available in PIN mode", file=sys.stderr)
+            return 2
+        hidden = []
+        hfiles = args.hidden_file or []
+        for i, hp in enumerate(args.hidden_pin):
+            hdata = _read_bytes(Path(hfiles[i])) if i < len(hfiles) else HIDDEN_HTML.encode("utf-8")
+            hidden.append((hp, hdata))
+
+    kdfparams = None
+    if args.auto_kdf and args.kdf == "argon2id":
+        kdfparams = calibrate_argon2(args.kdf_time)
+        print(f"auto KDF: argon2id m={kdfparams['m']} KiB, t={kdfparams['t']}, p={kdfparams['p']} "
+              f"(~{args.kdf_time:g}s per derivation on this machine)")
+
     outdir = Path(args.outdir) if args.outdir else None
     if outdir:
         outdir.mkdir(parents=True, exist_ok=True)
@@ -132,10 +174,12 @@ def cmd_lock(args: argparse.Namespace) -> int:
                 payload = stream_encrypt_file(
                     str(src), args.pin, str(bin_path),
                     recipient=recipient,
-                    kdf=args.kdf, keyfile=keyfile, chunk_size=args.chunk_size * 1024,
+                    kdf=args.kdf, kdfparams=kdfparams, keyfile=keyfile,
+                    chunk_size=args.chunk_size * 1024,
                     one_time=args.one_time, max_views=args.max_views,
                     not_before=args.not_before, expires=args.expires,
                     watermark=args.watermark, kind=kind, name=name, sign_key=sign_key,
+                    decoy=decoy,
                 )
                 dest.write_text(render_viewer(payload), encoding="utf-8")
                 extra = f" + {bin_path}"
@@ -143,10 +187,11 @@ def cmd_lock(args: argparse.Namespace) -> int:
                 locked = build_locked_html(
                     _read_bytes(src), args.pin,
                     recipient=recipient,
-                    kdf=args.kdf, keyfile=keyfile, one_time=args.one_time,
+                    kdf=args.kdf, kdfparams=kdfparams, keyfile=keyfile,
+                    one_time=args.one_time,
                     max_views=args.max_views, not_before=args.not_before,
                     expires=args.expires, watermark=args.watermark,
-                    kind=kind, name=name, sign_key=sign_key, decoy=decoy,
+                    kind=kind, name=name, sign_key=sign_key, decoy=decoy, hidden=hidden,
                 )
                 dest.write_text(locked, encoding="utf-8")
                 extra = ""
@@ -195,13 +240,17 @@ def cmd_unlock(args: argparse.Namespace) -> int:
     try:
         payload = extract_payload(text)
         if payload.get("container") == "stream":
-            data_path = Path(args.data) if args.data else src.with_suffix(".bin")
-            if not data_path.is_file():
-                print(f"error: streaming data file not found: {data_path}", file=sys.stderr)
-                return 2
-            plaintext = stream_decrypt_file(
-                str(data_path), payload, args.pin,
-                str(args.output) if args.output else None, keyfile, private_key, shares)
+            duress = try_decoy(payload, args.pin, keyfile)
+            if duress is not None:
+                plaintext = duress          # the decoy PIN opens the harmless page
+            else:
+                data_path = Path(args.data) if args.data else src.with_suffix(".bin")
+                if not data_path.is_file():
+                    print(f"error: streaming data file not found: {data_path}", file=sys.stderr)
+                    return 2
+                plaintext = stream_decrypt_file(
+                    str(data_path), payload, args.pin,
+                    str(args.output) if args.output else None, keyfile, private_key, shares)
         else:
             plaintext = unlock(text, args.pin, keyfile, private_key, shares)
     except Exception:
@@ -255,6 +304,14 @@ def _gui_source() -> Path:
     return tmp
 
 
+def cmd_calibrate(args: argparse.Namespace) -> int:
+    params = calibrate_argon2(args.seconds, memory_kib=args.memory, parallelism=args.parallelism)
+    print(f"argon2id for ~{args.seconds:g}s on this machine: "
+          f"m={params['m']} KiB, t={params['t']}, p={params['p']}")
+    print("Use it with:  lockhtml lock FILE --pin PIN --auto-kdf")
+    return 0
+
+
 def cmd_gui(args: argparse.Namespace) -> int:
     page = _gui_source()
     uri = page.as_uri()
@@ -293,6 +350,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_lock.add_argument("--decoy-file", default=None, help="HTML file to use as the decoy page")
     p_lock.add_argument("--shares", default=None, metavar="N:K",
                         help="split the key into N shares, any K of which open the file")
+    p_lock.add_argument("--hidden-pin", action="append", default=None, metavar="PIN",
+                        help="hide another payload behind a second PIN (repeatable)")
+    p_lock.add_argument("--hidden-file", action="append", default=None, metavar="FILE",
+                        help="content for the corresponding --hidden-pin")
+    p_lock.add_argument("--auto-kdf", action="store_true",
+                        help="measure this machine and pick the strongest Argon2id cost")
+    p_lock.add_argument("--kdf-time", type=float, default=DEFAULT_KDF_SECONDS, metavar="SECONDS",
+                        help="target seconds per derivation for --auto-kdf (default 0.5)")
+    p_lock.add_argument("-r", "--recursive", action="store_true",
+                        help="recurse into directories given as input")
     p_lock.add_argument("--stream", action="store_true",
                         help="streaming container: write ciphertext to a sidecar .bin (for large files)")
     p_lock.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE // 1024,
@@ -318,6 +385,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_keygen.add_argument("-o", "--output", help="output PEM path")
     p_keygen.add_argument("--force", action="store_true", help="overwrite an existing key")
     p_keygen.set_defaults(func=cmd_keygen)
+
+    p_cal = sub.add_parser("calibrate", help="measure this machine and suggest Argon2id parameters")
+    p_cal.add_argument("--seconds", type=float, default=DEFAULT_KDF_SECONDS,
+                       help="target seconds per derivation (default 0.5)")
+    p_cal.add_argument("--memory", type=int, default=ARGON2_PARAMS["m"],
+                       help="Argon2id memory cost in KiB")
+    p_cal.add_argument("--parallelism", type=int, default=1, help="Argon2id parallelism")
+    p_cal.set_defaults(func=cmd_calibrate)
 
     p_gui = sub.add_parser("gui", help="open the browser-based graphical interface")
     p_gui.set_defaults(func=cmd_gui)

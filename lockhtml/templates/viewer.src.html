@@ -98,6 +98,8 @@
     <h1 id="dlTitle">File ready</h1>
     <p class="sub" id="dlSub"></p>
     <button id="dlBtn">Download</button>
+    <button id="saveDisk" style="display:none;margin-top:8px;background:#262b36;background-image:none">Save to disk (streaming)</button>
+    <div class="msg" id="saveState"></div>
   </div></div>
 </div>
 <div id="wm" class="hidden"><span id="wmText"></span></div>
@@ -436,11 +438,14 @@
             (p.maxviews == null ? "" : String(p.maxviews)),
             (p.notbefore || ""), (p.expires || "")];
     if (p.mode === "recipient") parts.push(p.eph || "");
+    if (p.decoy) parts.push((p.decoy && p.decoy.ct) || "");
     return parts.join("|");
   }
+  var lastStreamKey = null, lastStreamFile = null;
   async function streamDecrypt(dataFile, pin, keyfile) {
     var s = subtle();
     var raw = await rawKey(pin, b64ToBytes(payload.salt), keyfile);
+    lastStreamKey = raw; lastStreamFile = dataFile;
     var aesKey = await s.importKey("raw", raw, { name: "AES-GCM" }, false, ["decrypt"]);
     var MAGIC = "LKHS1";
     var head = new Uint8Array(await dataFile.slice(0, MAGIC.length).arrayBuffer());
@@ -524,16 +529,23 @@
 
     var buf = null, usedDecoy = false, sigState = null;
     if (isStream) {
-      try {
-        buf = await streamDecrypt(dataFile, pin, keyfile);
-        sigState = payload.sig ? "ok" : null;
-      } catch (e) {
-        if (String(e && e.message) === "sig") {
-          $("unlock").disabled = false;
-          $("msg").textContent = T.verifyBad; $("msg").className = "msg err";
-          return;
+      // a duress PIN opens a small embedded page instead of the sidecar
+      if (payload.decoy) {
+        try { buf = await decryptBlob(payload.decoy, pin, keyfile); usedDecoy = true; }
+        catch (e0) { buf = null; }
+      }
+      if (buf === null) {
+        try {
+          buf = await streamDecrypt(dataFile, pin, keyfile);
+          sigState = payload.sig ? "ok" : null;
+        } catch (e) {
+          if (String(e && e.message) === "sig") {
+            $("unlock").disabled = false;
+            $("msg").textContent = T.verifyBad; $("msg").className = "msg err";
+            return;
+          }
+          buf = null;
         }
-        buf = null;
       }
     } else {
       sigState = await verifySig();
@@ -543,8 +555,10 @@
       }
       try { buf = await decryptBlob(payload, pin, keyfile); }
       catch (e) {
-        if (payload.decoy) {
-          try { buf = await decryptBlob(payload.decoy, pin, keyfile); usedDecoy = true; }
+        var alts = (payload.slots || []).slice();
+        if (payload.decoy) alts.push(payload.decoy);
+        for (var ai = 0; ai < alts.length; ai++) {
+          try { buf = await decryptBlob(alts[ai], pin, keyfile); usedDecoy = true; break; }
           catch (e2) { buf = null; }
         }
       }
@@ -566,7 +580,45 @@
       renderHtml(new TextDecoder().decode(buf));
     }
     applyWatermark();
+
+    // Offer a constant-memory save for streaming containers (Chromium only).
+    if (isStream && !usedDecoy && window.showSaveFilePicker && lastStreamKey) {
+      $("saveDisk").style.display = "block";
+    }
   }
+
+  async function saveStreamToDisk() {
+    var handle = await window.showSaveFilePicker({ suggestedName: payload.name || "unlocked.bin" });
+    var w = await handle.createWritable();
+    var s = subtle();
+    var aesKey = await s.importKey("raw", lastStreamKey, { name: "AES-GCM" }, false, ["decrypt"]);
+    var cs = payload.chunkSize, n = payload.chunkCount, baseIv = b64ToBytes(payload.baseiv);
+    var off = 5;
+    for (var i = 0; i < n; i++) {
+      var size = (i === n - 1) ? (lastStreamFile.size - off) : (cs + 16);
+      var ct = new Uint8Array(await lastStreamFile.slice(off, off + size).arrayBuffer());
+      off += size;
+      var nonce = new Uint8Array(12); nonce.set(baseIv, 0); new DataView(nonce.buffer).setUint32(8, i, false);
+      var aad = new Uint8Array(4); new DataView(aad.buffer).setUint32(0, i, false);
+      var pt = new Uint8Array(await s.decrypt({ name: "AES-GCM", iv: nonce, additionalData: aad }, aesKey, ct));
+      await w.write(pt);
+    }
+    await w.close();
+  }
+
+  $("saveDisk").addEventListener("click", async function () {
+    $("saveState").textContent = "Saving…";
+    $("saveState").className = "msg";
+    try {
+      await saveStreamToDisk();
+      $("saveState").textContent = "Saved.";
+      $("saveState").className = "msg ok";
+    } catch (e) {
+      if (e && e.name === "AbortError") { $("saveState").textContent = ""; return; }
+      $("saveState").textContent = "Could not save to disk.";
+      $("saveState").className = "msg err";
+    }
+  });
 
   $("unlock").addEventListener("click", attempt);
   $("pin").addEventListener("keydown", function (e) { if (e.key === "Enter") attempt(); });

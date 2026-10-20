@@ -78,6 +78,19 @@ Shamir secret sharing was reviewed against the standard failure modes:
 **Known limitation.** Any *k* holders can reconstruct the seed, and a reconstructed seed cannot be
 revoked — the file must be re-locked with a fresh split if shares are exposed.
 
+## v2.0 review (hidden volumes, auto-KDF, streaming decoy)
+
+| Risk | Mitigation | Test |
+| --- | --- | --- |
+| A hidden slot leaks into the cover view | Slots are tried only after the main payload fails | `test_hidden_volume` asserts the hidden text is absent from the file |
+| Wrong PIN opening the wrong slot | Each slot has its own salt/IV and GCM tag | `test_hidden_volume_multiple_slots` |
+| A decoy blob being swapped in a stream | Its ciphertext is covered by the streaming MAC | `test_streaming_decoy` |
+| Auto-KDF picking an unusable cost | `t` is clamped to 1..64 and the params are stored per file | `test_calibrate_argon2` |
+| Hidden slots in recipient mode (no PIN to key them) | Rejected outright | `test_hidden_rejected_in_recipient_mode` |
+
+**Known limitation.** Hidden slots are *visible* in the file's JSON; they are unreadable without their
+PIN but their presence is not concealed.
+
 ## Findings
 
 ### Fixed during this cycle
@@ -90,6 +103,7 @@ revoked — the file must be re-locked with a fresh split if shares are exposed.
 | 4 | `unlock` with `-o` stopped writing the plaintext for the embedded container after the streaming branch was added. | Medium | Caught by the test suite; fixed and covered by `test_cli_lock_and_unlock`. |
 | 5 | `build_locked_html` still required a positional `pin`, so recipient mode could not be used through it. | Low | Made optional; covered by the recipient CLI test. |
 | 6 | The GUI's shares helper referenced a non-existent `payload_pin()` function. | Low | Caught while wiring the UI; replaced with the direct argument. |
+| 7 | The browser e2e suite died part-way through a long run (detached frame, then the whole browser). | Medium | Not a product bug: a memory-tight container. The harness now recycles the page every few checks and relaunches Chrome if it dies. |
 
 ### Reviewed and judged acceptable
 

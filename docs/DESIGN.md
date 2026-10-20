@@ -133,3 +133,45 @@ lockhtml unlock holiday.locked.html --pin 4821 --data holiday.locked.bin -o holi
 
 In the GUI, tick **“Streaming bundle (large files)”**; it downloads both files. The recipient
 drops the `.html` in as usual and adds the `.bin` when prompted.
+
+## Choosing the KDF cost (v2.0)
+
+Argon2id is deliberately slow, and "slow" is device-relative: a memory cost of 19 MiB and a time
+cost of 2 that feels instant on a laptop is sluggish on a phone, and a cost tuned for a phone is
+weak on a workstation. LockHTML does not guess. `lockhtml calibrate` runs **one** Argon2id pass with
+`t = 1`, measures how long it took, and multiplies out the time cost needed to hit a target (0.5 s by
+default):
+
+```
+t = round(target_seconds / seconds_per_pass)      # clamped to 1..64
+```
+
+`lock --auto-kdf` does that and stores the resulting `m`, `t` and `p` in the file's `kdfparams`. The
+recipient's machine does not need to agree with the sender's — the parameters travel with the file,
+so it always opens at exactly the cost it was created with. The memory cost is left alone (it is the
+part that buys resistance to GPU/ASIC attacks); only the time cost is scaled.
+
+## Hidden volumes (v2.0)
+
+A hidden volume is the duress/decoy idea generalised. The payload can carry a `slots` array; each
+slot is a complete little ciphertext — its own salt, its own IV, its own GCM tag — keyed by its own
+PIN. Unlocking walks the list:
+
+```
+main payload  →  slot 0  →  slot 1  →  …  →  decoy
+```
+
+and the first one the PIN opens wins. That ordering is the whole trick: the cover PIN opens the main
+payload and never touches the slots, so the cover view costs nothing extra and reveals nothing about
+the hidden content.
+
+**What this does and does not hide.** The extra slots are *visible* in the file's JSON — anyone can
+see that there is more than one encrypted blob. What they cannot do is read it. So a hidden volume
+protects you from someone being *shown* the cover document; it is not a defence against someone
+examining the file itself. `SECURITY.md` says this plainly, and it is worth repeating: plausible
+deniability, not proof of absence.
+
+In the streaming container there is only one blob (the sidecar), so the decoy is stored as a small
+**embedded** page inside the HTML. Enter the duress PIN and the viewer renders that page instead of
+ever decrypting the sidecar — which is why the sidecar's MAC covers the decoy blob too: swapping it
+out is detected.

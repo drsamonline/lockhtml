@@ -93,6 +93,24 @@ the optional PIN simply extends the HKDF input. `decoy` is not available in reci
 
 Private keys are PKCS#8 PEM; public keys are the 32-byte raw value, base64.
 
+## Hidden slots (v2.0)
+
+A PIN-mode payload may carry extra payloads in a `slots` array, each encrypted under its own PIN:
+
+```jsonc
+  "slots": [ { "kdf": ..., "kdfparams": {...}, "salt": "<b64>", "iv": "<b64>", "ct": "<b64>" } ]
+```
+
+Readers try the main payload first, then each slot, then `decoy`. Each slot uses its own salt and IV.
+In the streaming container a decoy is stored as a single embedded `decoy` blob (the same shape as the
+embedded container's) and its ciphertext is covered by the streaming MAC.
+
+## Auto-calibrated KDF (v2.0)
+
+The `kdfparams` for argon2id are not fixed: `lockhtml calibrate` times one pass on the current machine
+and scales the time cost `t` so a derivation takes about `--seconds` (default 0.5). `--auto-kdf`
+stores those parameters in the file, so a locked file always opens at the cost it was created with.
+
 ## Shares mode (Shamir)
 
 The key can be split between several holders, so that any *k* of *n* of them (and no fewer) can open

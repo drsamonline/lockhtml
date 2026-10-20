@@ -19,6 +19,15 @@ Legend: ✅ shipped · 🔜 planned · 💭 under consideration
 - ✅ Payload format v2 with a written spec
 - ✅ Build-time minification with verification
 
+## Shipped in v2.0
+
+- ✅ **Hidden volume** — several PIN slots in one file, each opening different content
+- ✅ **Auto-calibrated KDF** — `calibrate` + `--auto-kdf`
+- ✅ **Streaming decoy** — the duress PIN now works on streaming containers
+- ✅ **Folder support** — `--recursive` (CLI) and folder pick/drop (GUI)
+- ✅ **Constant-memory save** — decrypt a stream straight to disk (File System Access API)
+- ✅ **Launcher scripts** — `.sh` / `.bat` for the CLI and the GUI, plus `requirements.txt`
+
 ## Shipped in v1.4
 
 - ✅ **Shamir secret sharing** — split the key so any *k* of *n* holders can open it
@@ -44,15 +53,16 @@ Legend: ✅ shipped · 🔜 planned · 💭 under consideration
 ## Planned
 
 ### 🔜 Cryptography
-- **Auto-calibrated KDF cost** — measure the device and pick the strongest parameters it can handle
-  in a fixed time budget, stored per file.
-- **Hidden volume** — a decoy and a real payload in one file with plausible deniability.
+- **`age` interoperability** — read and write [age](https://age-encryption.org) v1 files (X25519 and
+  scrypt recipients). *Deferred from v2.0 deliberately:* it is a separate file format with its own
+  chunked-ChaCha20-Poly1305 STREAM construction, and `cryptography`'s ChaCha20-Poly1305 has no Web
+  Crypto equivalent — so it would be CLI-only, and it needs validating against the official age test
+  vectors before it can be trusted. Shipping unverified crypto interop is worse than not shipping it.
+  This stays the top cryptography item.
+- **Hidden slots in recipient mode** — hidden content without a PIN.
 
 ### 🔜 Usability
-- **Constant-memory output** in the browser via the File System Access API (streaming save),
-  so decryption no longer assembles the whole result in a Blob.
-- **Decoy PIN support in the streaming container** (currently embedded-only).
-- **Folder drop** — lock an entire multi-file site into one bundle.
+- **Constant-memory output in the GUI** — the viewer has it; the GUI's unlock tab still assembles a Blob.
 - **More languages** for the viewer and the GUI.
 - **QR code for the PIN** generated offline.
 - **Reduced-motion and high-contrast modes.**
@@ -60,8 +70,10 @@ Legend: ✅ shipped · 🔜 planned · 💭 under consideration
 ### 🔜 Distribution
 - **Browser extension** (Chrome / Firefox) — right-click a page to lock it, offline.
 - **Tauri desktop wrapper** — a native window using the OS webview (still no server).
-- **`age` format interop** — read and write the widely-used `age` container.
-- **PyPI publication** so `pip install lockhtml` works without the git URL.
+- **PyPI publication** so `pip install lockhtml` works without the git URL. The packaging is ready
+  (`python -m build` produces a wheel and sdist), and a `publish.yml` workflow is included that uses
+  PyPI **trusted publishing** — it just needs a publisher configured on the PyPI side, which requires
+  account access this project does not have from CI.
 
 ### 💭 Under consideration
 - WebAuthn / passkey as an unlock factor.

@@ -25,6 +25,9 @@ We aim to acknowledge reports within a few days.
   `0x11b`); the key is `HKDF-SHA256(seed || pin, salt, info="lockhtml/shamir")` with an optional
   keyfile pepper. Shares are distributed separately and never stored in the locked file. See
   [docs/FORMAT.md](docs/FORMAT.md#shares-mode-shamir).
+- **Hidden volume**: additional payloads ("slots") encrypted under their own PINs, each with its own
+  salt and IV, exactly like the main payload. `decrypt_any` tries the main payload, then every slot,
+  then the decoy.
 - **Signing**: optional Ed25519 over the ciphertext (embedded) or over the MAC input (streaming);
   verified in-browser before display.
 - **Streaming container**: AES-256-GCM per 1 MiB chunk, nonce = `base_iv || uint32_be(index)`,
@@ -44,6 +47,9 @@ LockHTML is a **client-side** tool. Understanding its threat model matters:
   the raw source.
 - **The streaming container's MAC is keyed by the PIN-derived key**, so it protects integrity but
   not authenticity — only an Ed25519 signature proves who produced the file. Sign when that matters.
+- **A hidden volume is plausible deniability, not proof of absence.** The extra slots are visible in
+  the file's JSON to anyone who looks — they simply cannot be decrypted without their PIN. It
+  protects against someone being *shown* the cover content, not against a forensic look at the file.
 - **Shares move the secret, not the trust.** *k-1* shares reveal nothing about the seed, but any *k*
   holders can reconstruct it, and a reconstructed seed cannot be revoked — re-lock the file with a
   fresh split if shares are exposed.

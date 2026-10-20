@@ -24,10 +24,11 @@ const launch = () => puppeteer.launch({
 let browser = await launch();
 const results = [];
 let sinceRecycle = 0;
+const T0 = Date.now();
 const ok = (name, cond) => {
   results.push([name, cond]);
   sinceRecycle++;
-  console.log((cond ? "PASS " : "FAIL ") + name);
+  console.log((cond ? "PASS " : "FAIL ") + name + "  +" + ((Date.now() - T0) / 1000).toFixed(1) + "s");
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -73,6 +74,19 @@ async function waitStage() {
     return true;
   } catch { return false; }
 }
+// For checks that expect a REJECTION: resolve as soon as either the stage opens
+// (the check fails) or the viewer shows an error (the check passes). Waiting the
+// full stage timeout for every negative case made the suite needlessly slow.
+async function waitRejected(ms = 10000) {
+  try {
+    await page.waitForFunction(() => {
+      const open = !document.getElementById("stage").classList.contains("hidden");
+      const errored = document.getElementById("msg").classList.contains("err");
+      return open || errored;
+    }, { timeout: ms });
+  } catch { /* nothing happened; treat as rejected */ }
+  return page.evaluate(() => document.getElementById("stage").classList.contains("hidden"));
+}
 const vis = (id) => page.evaluate((x) => !document.getElementById(x).classList.contains("hidden"), id);
 const text = (s) => page.evaluate((x) => (document.querySelector(x) || {}).textContent || "", s);
 const srcdoc = () => page.evaluate(() => document.getElementById("viewer").srcdoc || "");
@@ -88,7 +102,7 @@ ok("embedded: PBKDF2 unlock", (await waitStage()) && (await srcdoc()).includes("
 await open("c_keyfile.html"); await upload("#keyfile", "kf.bin"); await type("4821");
 ok("embedded: keyfile unlock", (await waitStage()) && (await srcdoc()).includes("ORION-7742"));
 await open("c_keyfile.html"); await type("4821");
-ok("embedded: missing keyfile rejected", !(await waitStage()));
+ok("embedded: missing keyfile rejected", await waitRejected());
 
 await open("e_signed.html"); await type("4821"); await waitStage();
 ok("embedded: Ed25519 verified", (await text("#msg")).toLowerCase().includes("verified"));
@@ -122,32 +136,32 @@ ok("stream: Argon2id", (await waitStage()) && (await vis("dlwrap")));
 await open("s_keyfile.html"); await upload("#keyfile", "kf.bin"); await upload("#datafile", "s_keyfile.bin"); await type("4821");
 ok("stream: keyfile", (await waitStage()) && (await vis("dlwrap")));
 await open("s_keyfile.html"); await upload("#datafile", "s_keyfile.bin"); await type("4821");
-ok("stream: missing keyfile rejected", !(await waitStage()));
+ok("stream: missing keyfile rejected", await waitRejected());
 
 await open("s_signed.html"); await upload("#datafile", "s_signed.bin"); await type("4821"); await waitStage();
 ok("stream: signature verified", (await text("#msg")).toLowerCase().includes("verified"));
 
 await open("s_html.html"); await upload("#datafile", "s_html_tampered.bin"); await type("4821");
-ok("stream: tampered sidecar rejected", !(await waitStage()));
+ok("stream: tampered sidecar rejected", await waitRejected());
 
 await open("s_html.html"); await type("4821");
-ok("stream: missing data file rejected", !(await waitStage()));
+ok("stream: missing data file rejected", await waitRejected());
 
 // ---- X25519 recipient mode ----
 await open("r_embedded.html"); await upload("#privkey", "rec.pem"); await page.click("#unlock");
 ok("recipient: unlock with private key (no PIN)", (await waitStage()) && (await srcdoc()).includes("ORION-7742"));
 
 await open("r_embedded.html"); await page.click("#unlock");
-ok("recipient: missing private key rejected", !(await waitStage()));
+ok("recipient: missing private key rejected", await waitRejected());
 
 await open("r_embedded.html"); await upload("#privkey", "other.pem"); await page.click("#unlock");
-ok("recipient: wrong private key rejected", !(await waitStage()));
+ok("recipient: wrong private key rejected", await waitRejected());
 
 await open("r_pin.html"); await upload("#privkey", "rec.pem"); await type("4821");
 ok("recipient: private key + PIN", (await waitStage()) && (await srcdoc()).includes("ORION-7742"));
 
 await open("r_pin.html"); await upload("#privkey", "rec.pem"); await page.click("#unlock");
-ok("recipient: PIN required but missing", !(await waitStage()));
+ok("recipient: PIN required but missing", await waitRejected());
 
 await open("r_file.html"); await upload("#privkey", "rec.pem"); await page.click("#unlock");
 ok("recipient: binary -> download", (await waitStage()) && (await vis("dlwrap")));
@@ -160,10 +174,10 @@ await open("sh_embedded.html"); await upload("#sharesFile", "sh_embedded.shares.
 ok("shares: 3-of-5 opens via .shares.txt", (await waitStage()) && (await srcdoc()).includes("ORION-7742"));
 
 await open("sh_embedded.html"); await upload("#sharesFile", "sh_two.txt"); await page.click("#unlock");
-ok("shares: 2 of 3 rejected", !(await waitStage()));
+ok("shares: 2 of 3 rejected", await waitRejected());
 
 await open("sh_embedded.html"); await page.click("#unlock");
-ok("shares: none rejected", !(await waitStage()));
+ok("shares: none rejected", await waitRejected());
 
 await open("sh_pin.html"); await upload("#sharesFile", "sh_pin.shares.txt"); await type("4821");
 ok("shares: with PIN", (await waitStage()) && (await srcdoc()).includes("ORION-7742"));
@@ -179,7 +193,7 @@ await open("hidden.html"); await type("0000");
 ok("hidden: hidden PIN -> real", (await waitStage()) && (await srcdoc()).includes("PISCES-9931"));
 
 await open("hidden.html"); await type("9999");
-ok("hidden: wrong PIN rejected", !(await waitStage()));
+ok("hidden: wrong PIN rejected", await waitRejected());
 
 await open("hidden_stream.html"); await upload("#datafile", "hidden_stream.bin"); await type("4821");
 ok("stream decoy: real PIN -> download", (await waitStage()) && (await vis("dlwrap")));

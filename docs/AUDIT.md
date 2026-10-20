@@ -104,6 +104,12 @@ PIN but their presence is not concealed.
 | 5 | `build_locked_html` still required a positional `pin`, so recipient mode could not be used through it. | Low | Made optional; covered by the recipient CLI test. |
 | 6 | The GUI's shares helper referenced a non-existent `payload_pin()` function. | Low | Caught while wiring the UI; replaced with the direct argument. |
 | 7 | The browser e2e suite died part-way through a long run (detached frame, then the whole browser). | Medium | Not a product bug: a memory-tight container. The harness now recycles the page every few checks and relaunches Chrome if it dies. |
+| 8 | `gui.sh` `exec`'d `lockhtml.sh`, which has no executable bit, so it failed with `Permission denied` — the launcher simply did not work. | High | Runs the launcher through `sh`; the launcher test now executes `gui.sh` instead of only syntax-checking it. |
+| 9 | The GUI's Lock button stayed disabled when using a recipient key or a share split, because only the PIN field had an input listener. | High | Listeners added on both fields; the button re-evaluates as you type. |
+| 10 | The GUI silently dropped a hidden PIN when combined with recipient or split mode, so a user could believe a hidden volume existed when it did not. | High | Now an explicit error, matching the CLI's behaviour. |
+| 11 | `lockhtml.bat` used `%PY%` unquoted, breaking on Python paths containing spaces. | Medium | Quoted at every use site. |
+| 12 | `unlock()`/`decrypt()` on a streaming payload raised a bare `KeyError` instead of explaining that the sidecar is needed. | Low | Explicit `ValueError`; covered by `test_unlock_rejects_stream_payload`. |
+| 13 | `make minify` minified without rebuilding first. Minify is not idempotent, so this could leave an asset that CI rejects. | Medium | `make minify` is now an alias for `make build`; `build + minify` is verified deterministic. |
 
 ### Reviewed and judged acceptable
 

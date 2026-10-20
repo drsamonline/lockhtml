@@ -1,6 +1,6 @@
 {
   "name": "lockhtml-dev",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "private": true,
   "description": "Build tooling for LockHTML: GUI minification and the Argon2id WASM runtime.",
   "license": "MIT",

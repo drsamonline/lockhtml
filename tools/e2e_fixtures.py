@@ -29,6 +29,12 @@ DOC = "<!DOCTYPE html><html><body><h1>Secret</h1><p>ORION-7742</p></body></html>
 PIN = "4821"
 KEYFILE = b"the-keyfile-bytes-0123456789abcdef"
 
+# The browser runs Argon2id in WASM, and this suite unlocks dozens of files in a
+# row, so full-strength parameters make it far too slow. These are real Argon2id
+# parameters, just cheap: the point here is to exercise the code path, while the
+# Python unit tests cover production-strength parameters.
+E2E_ARGON2 = {"m": 1024, "t": 1, "p": 1}
+
 
 def main() -> int:
     out = sys.argv[1] if len(sys.argv) > 1 else "/tmp/lockhtml-e2e"
@@ -36,7 +42,8 @@ def main() -> int:
     p = lambda name: os.path.join(out, name)
 
     # ---- embedded container ----
-    open(p("a_argon2.html"), "w").write(build_locked_html(DOC, PIN, kdf="argon2id"))
+    open(p("a_argon2.html"), "w").write(
+        build_locked_html(DOC, PIN, kdf="argon2id", kdfparams=dict(E2E_ARGON2)))
     open(p("b_pbkdf2.html"), "w").write(build_locked_html(DOC, PIN, kdf="pbkdf2"))
     open(p("kf.bin"), "wb").write(KEYFILE)
     open(p("c_keyfile.html"), "w").write(build_locked_html(DOC, PIN, keyfile=KEYFILE))
@@ -62,7 +69,7 @@ def main() -> int:
     stream("s_html", DOC.encode(), kdf="pbkdf2", kind="html", chunk_size=65536)
     stream("s_big", os.urandom(512 * 1024), kdf="pbkdf2", kind="file",
            name="big.bin", chunk_size=131072)
-    stream("s_argon2", os.urandom(300_000), kdf="argon2id", kind="file",
+    stream("s_argon2", os.urandom(300_000), kdf="argon2id", kdfparams=dict(E2E_ARGON2), kind="file",
            name="a.bin", chunk_size=65536)
     stream("s_keyfile", os.urandom(200_000), kdf="pbkdf2", kind="file",
            name="k.bin", chunk_size=65536, keyfile=KEYFILE)

@@ -1,5 +1,5 @@
 /* LockHTML service worker — makes the GUI installable and fully offline. */
-const CACHE = "lockhtml-v2.0.0";
+const CACHE = "lockhtml-v2.0.1";
 const ASSETS = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg"];
 
 self.addEventListener("install", (event) => {

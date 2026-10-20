@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import itertools
-import json
 import os
 import subprocess
 import sys
@@ -202,7 +201,7 @@ def test_extract_payload_invalid():
 
 
 def test_version():
-    assert __version__ == "2.0.0"
+    assert __version__ == "2.0.1"
 
 
 # --- CLI -------------------------------------------------------------------
@@ -798,13 +797,50 @@ def test_cli_stream_decoy(tmp_path):
     assert duress.returncode == 0 and "No content" in duress.stdout
 
 
-def test_launchers_present_and_valid():
+def test_launchers_present_and_valid(tmp_path):
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     for name in ("lockhtml.sh", "gui.sh", "lockhtml.bat", "gui.bat", "requirements.txt"):
         assert os.path.isfile(os.path.join(root, name)), name
     for sh in ("lockhtml.sh", "gui.sh"):
         r = subprocess.run(["sh", "-n", os.path.join(root, sh)], capture_output=True)
         assert r.returncode == 0, r.stderr
+
+    # Actually run them: a syntax check would not have caught gui.sh exec'ing a
+    # non-executable file.
+    r = subprocess.run(["sh", os.path.join(root, "lockhtml.sh"), "--version"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip().startswith("lockhtml ")
+
+    # gui.sh must at least resolve its launcher (it cannot open a browser here).
+    r = subprocess.run(["sh", os.path.join(root, "gui.sh")], capture_output=True, text=True,
+                       cwd=tmp_path, env={**os.environ, "BROWSER": "true"})
+    assert "Permission denied" not in (r.stdout + r.stderr)
+    assert r.returncode == 0, r.stderr
+
+    # and the launcher must be able to lock and unlock a file for real
+    src = tmp_path / "launcher.txt"
+    src.write_text("launcher ORION-7742", encoding="utf-8")
+    sh = os.path.join(root, "lockhtml.sh")
+    assert subprocess.run(["sh", sh, "lock", str(src), "--pin", "4821"],
+                          cwd=tmp_path, capture_output=True).returncode == 0
+    r = subprocess.run(["sh", sh, "unlock", str(tmp_path / "launcher.locked.html"),
+                        "--pin", "4821"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "launcher ORION-7742"
+
+
+def test_unlock_rejects_stream_payload(tmp_path):
+    src = tmp_path / "b.bin"
+    src.write_bytes(os.urandom(4096))
+    sidecar = tmp_path / "d.bin"
+    payload = stream_encrypt_file(str(src), "4821", str(sidecar))
+    # a streaming payload must not be handed to the embedded decrypt path
+    with pytest.raises(ValueError, match="streaming container"):
+        unlock(render_viewer(payload), "4821")
+    with pytest.raises(ValueError, match="embedded payload"):
+        decrypt(payload, "4821")
+    assert stream_decrypt_file(str(sidecar), payload, "4821") == src.read_bytes()
 
 
 def test_cli_stream(tmp_path):

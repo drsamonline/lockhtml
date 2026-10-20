@@ -121,15 +121,22 @@ def cmd_lock(args: argparse.Namespace) -> int:
             return 2
         hidden = []
         hfiles = args.hidden_file or []
+        if hfiles and len(hfiles) != len(args.hidden_pin):
+            print(f"note: {len(args.hidden_pin)} hidden PIN(s) but {len(hfiles)} hidden file(s); "
+                  "extra PINs get a placeholder page", file=sys.stderr)
         for i, hp in enumerate(args.hidden_pin):
             hdata = _read_bytes(Path(hfiles[i])) if i < len(hfiles) else HIDDEN_HTML.encode("utf-8")
             hidden.append((hp, hdata))
 
     kdfparams = None
-    if args.auto_kdf and args.kdf == "argon2id":
-        kdfparams = calibrate_argon2(args.kdf_time)
-        print(f"auto KDF: argon2id m={kdfparams['m']} KiB, t={kdfparams['t']}, p={kdfparams['p']} "
-              f"(~{args.kdf_time:g}s per derivation on this machine)")
+    if args.auto_kdf:
+        if args.kdf == "argon2id":
+            kdfparams = calibrate_argon2(args.kdf_time)
+            print(f"auto KDF: argon2id m={kdfparams['m']} KiB, t={kdfparams['t']}, p={kdfparams['p']} "
+                  f"(~{args.kdf_time:g}s per derivation on this machine)")
+        else:
+            print("note: --auto-kdf only applies to argon2id; ignoring it for " + args.kdf,
+                  file=sys.stderr)
 
     outdir = Path(args.outdir) if args.outdir else None
     if outdir:

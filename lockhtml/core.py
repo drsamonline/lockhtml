@@ -555,6 +555,9 @@ def encrypt(
 def _decrypt_blob(blob: Dict[str, Any], pin: Optional[str], keyfile: Optional[bytes],
                   private_key: Optional[X25519PrivateKey] = None,
                   shares: Optional[List[str]] = None) -> bytes:
+    if "ct" not in blob or "iv" not in blob:
+        # A streaming payload keeps its ciphertext in the sidecar, not the HTML.
+        raise ValueError("not an embedded payload; streaming containers need their sidecar")
     mode = blob.get("mode")
     if mode == "recipient":
         if private_key is None:
@@ -672,7 +675,10 @@ def unlock(locked_html: str, pin: Optional[str] = None,
     PIN unlocks first (main payload, then slots, then decoy).
     """
     payload = extract_payload(locked_html)
-    if payload.get("container") != "stream" and payload.get("mode") in (None, "pin"):
+    if payload.get("container") == "stream":
+        raise ValueError(
+            "this is a streaming container; call stream_decrypt_file() with its .bin sidecar")
+    if payload.get("mode") in (None, "pin"):
         if pin is None:
             raise ValueError("a PIN is required")
         return decrypt_any(payload, pin, keyfile)[0]

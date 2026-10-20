@@ -766,6 +766,8 @@ $("pinLock").addEventListener("input", () => {
   $("strengthText").textContent = pin ? `PIN strength: ${labels[s]}` : DEFAULTS.pinHint;
   renderLockList();
 });
+// Typing a recipient key or a split also changes whether Lock is allowed.
+["recipientPub", "splitKey"].forEach(id => $(id).addEventListener("input", renderLockList));
 $("togglePin").addEventListener("click", () => {
   const i = $("pinLock"), show = i.type === "password";
   i.type = show ? "text" : "password"; $("togglePin").textContent = show ? "Hide" : "Show";
@@ -827,6 +829,12 @@ $("lockBtn").addEventListener("click", async () => {
   }
   let hiddenSlots = null;
   if ($("hiddenPin").value) {
+    if (recipientBytes || split) {
+      // Silently dropping it would leave the user believing a hidden volume exists.
+      $("statusLock").className = "status err";
+      $("statusLock").textContent = "A hidden volume works only with a PIN, not with a recipient key or a share split.";
+      return;
+    }
     const hf = $("hiddenPick").files[0];
     const htext = hf ? await hf.text()
       : "<!DOCTYPE html><html><body><p>Nothing here.</p></body></html>";

@@ -1,6 +1,12 @@
 // Minify the generated LockHTML assets.
 //
-//   node tools/minify.mjs
+//   python tools/build.py && node tools/minify.mjs
+//
+// IMPORTANT: always run tools/build.py first. Minifying an already-minified
+// index.html is NOT idempotent (the second pass re-runs terser over the output
+// and changes it), so minifying in place twice leaves an asset that CI — which
+// runs build + minify from scratch — will reject with a confusing diff.
+// `make minify` is therefore an alias for `make build`.
 //
 // Minifies lockhtml/gui/index.html and the two viewer templates in place.
 // The viewer templates are embedded into every locked file, so shrinking them

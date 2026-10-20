@@ -5,7 +5,7 @@ help:
 	@echo "  make install       Install the package in editable mode with dev tools"
 	@echo "  make test          Run the test suite"
 	@echo "  make build         Regenerate + minify the GUI and viewer templates"
-	@echo "  make minify        Minify generated assets only"
+	@echo "  make minify        Alias for build (minify must follow a fresh build)"
 	@echo "  make e2e           End-to-end browser test (needs Chrome)"
 	@echo "  make e2e-gui       GUI code path -> Python verification"
 	@echo "  make lock-example  Rebuild examples/sample.locked.html"
@@ -23,8 +23,10 @@ build:
 	python tools/build.py
 	node tools/minify.mjs
 
-minify:
-	node tools/minify.mjs
+# NOTE: always regenerate from source before minifying. Minifying an
+# already-minified index.html is not idempotent, so a bare `minify` would leave
+# an asset that CI (which runs build + minify) rejects.
+minify: build
 
 e2e:
 	python tools/e2e_fixtures.py /tmp/lockhtml-e2e

@@ -4,6 +4,40 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-10-20
+
+A post-release audit pass. Every item below is a fix found by *running* things rather than reading
+them — see `docs/AUDIT.md` for the detail.
+
+### Fixed
+- **`gui.sh` did not work at all.** It `exec`'d `lockhtml.sh`, which has no executable bit, so it died
+  with `Permission denied`. It now runs the launcher through `sh`.
+- **The GUI's Lock button stayed disabled** when you used a recipient public key or a share split
+  instead of a PIN: only the PIN field had an input listener, so the button never re-evaluated.
+- **The GUI silently ignored a hidden volume** combined with recipient or split mode, which could
+  leave you believing a hidden payload existed when it did not. It is now an explicit error, matching
+  the CLI.
+- **`lockhtml.bat` broke on any Python path containing a space** (`C:\Program Files\…`): `%PY%` was
+  used unquoted. It is quoted at every use site now.
+- **`unlock()`/`decrypt()` on a streaming payload** raised a bare `KeyError`; they now explain that a
+  streaming container needs its sidecar.
+
+### Changed
+- `--auto-kdf` now says so instead of silently doing nothing when `--kdf pbkdf2` is also given, and
+  mismatched `--hidden-pin`/`--hidden-file` counts print a note.
+- **`make minify` is now an alias for `make build`.** Minifying an already-minified `index.html` is
+  not idempotent, so the old target could leave an asset that CI rejects with a confusing diff.
+
+### Tests
+- The launcher test now *executes* `lockhtml.sh` (lock + unlock a real file) and `gui.sh` instead of
+  only syntax-checking them — a syntax check is exactly what missed the `gui.sh` bug.
+- The browser suite no longer waits the full 25 s stage timeout for checks that *expect* a rejection;
+  it resolves as soon as the viewer shows an error. Ten negative checks were burning ~250 s between
+  them, which had pushed the suite past the CI runner's patience. It now finishes in about 40 s.
+- The browser fixtures use cheap-but-real Argon2id parameters: the suite unlocks dozens of files in a
+  row, and full-strength parameters in WASM made it needlessly slow. Production-strength parameters
+  remain covered by the Python unit tests.
+
 ## [2.0.0] - 2026-10-20
 
 ### Added
@@ -138,6 +172,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-platform CLI and a single-file browser GUI.
 - GitHub Actions CI (Linux/Windows/macOS, Python 3.9–3.12) and GitHub Pages deployment.
 
+[2.0.1]: https://github.com/drsamonline/lockhtml/releases/tag/v2.0.1
 [2.0.0]: https://github.com/drsamonline/lockhtml/releases/tag/v2.0.0
 [1.4.0]: https://github.com/drsamonline/lockhtml/releases/tag/v1.4.0
 [1.3.0]: https://github.com/drsamonline/lockhtml/releases/tag/v1.3.0

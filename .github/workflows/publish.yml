@@ -7,9 +7,15 @@ name: Publish to PyPI
 # this repository and the "pypi" environment. Until that is configured the
 # publish job will fail; the build job still produces downloadable artifacts.
 
+# Manual by default: publishing needs a PyPI trusted publisher to be configured
+# first (PyPI → Your projects → Publishing → add a trusted publisher for this
+# repo and the "pypi" environment). Until that exists the publish job fails, so
+# it is not wired to the release event.
+#
+# Once it is configured, add this back to publish automatically on every release:
+#   release:
+#     types: [published]
 on:
-  release:
-    types: [published]
   workflow_dispatch:
 
 permissions:

@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="LockHTML - PIN-protect and one-time-view HTML files, entirely in your browser.">
+<title>LockHTML - Lock any HTML file behind a PIN</title>
+<style>
+  :root {
+    --bg: #0b0d12; --panel: #141822; --panel-2: #1b2130; --line: #262d3c;
+    --txt: #e9ecf2; --muted: #98a2b6; --accent: #5a86ff; --accent-2: #3a6bf0;
+    --ok: #33d17a; --warn: #ffb454; --err: #ff6b6b;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Inter, sans-serif;
+    background: radial-gradient(1400px 700px at 50% -15%, #1a2233 0%, var(--bg) 55%);
+    color: var(--txt); line-height: 1.55; min-height: 100vh;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 40px 20px 80px; }
+
+  header { text-align: center; margin-bottom: 28px; }
+  .logo {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-size: 26px; font-weight: 700; letter-spacing: -.5px;
+  }
+  .logo .badge-lock {
+    width: 40px; height: 40px; display: grid; place-items: center; font-size: 22px;
+    background: linear-gradient(160deg, #2b3a63, #1a2136);
+    border: 1px solid var(--line); border-radius: 12px;
+  }
+  header p { color: var(--muted); margin: 10px auto 0; max-width: 620px; font-size: 15px; }
+  .navlinks { margin-top: 14px; font-size: 13px; color: var(--muted); }
+  .navlinks a { margin: 0 8px; }
+
+  .tabs { display: flex; gap: 6px; justify-content: center; margin: 26px 0 18px; }
+  .tab {
+    padding: 9px 20px; border-radius: 10px; cursor: pointer; font-size: 14px;
+    font-weight: 600; color: var(--muted); border: 1px solid transparent;
+    background: transparent;
+  }
+  .tab.active { color: #fff; background: var(--panel); border-color: var(--line); }
+
+  .panel { background: var(--panel); border: 1px solid var(--line);
+           border-radius: 18px; padding: 26px; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+  .panel.hidden { display: none; }
+
+  .drop {
+    border: 2px dashed #2f3849; border-radius: 14px; padding: 34px 20px;
+    text-align: center; cursor: pointer; transition: border-color .15s, background .15s;
+    background: var(--panel-2);
+  }
+  .drop:hover, .drop.over { border-color: var(--accent); background: #1a2233; }
+  .drop .big { font-size: 30px; }
+  .drop .t { font-weight: 600; margin-top: 6px; }
+  .drop .s { color: var(--muted); font-size: 13px; margin-top: 4px; }
+
+  .filelist { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .fileitem {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 14px; font-size: 13px;
+  }
+  .fileitem .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fileitem .sz { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .fileitem button { background: none; border: 0; color: var(--muted); cursor: pointer;
+                     font-size: 16px; line-height: 1; padding: 2px 6px; }
+  .fileitem button:hover { color: var(--err); }
+
+  label.fld { display: block; margin: 20px 0 8px; font-size: 13px; font-weight: 600; }
+  .pinrow { display: flex; gap: 8px; }
+  input[type=password], input[type=text] {
+    flex: 1; padding: 12px 14px; font-size: 16px; letter-spacing: 2px;
+    background: #0e1118; color: #fff; border: 1px solid #2c3340; border-radius: 10px;
+    outline: none; width: 100%;
+  }
+  input:focus { border-color: var(--accent); }
+  .toggle { background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
+            border-radius: 10px; padding: 0 14px; cursor: pointer; font-size: 13px; }
+  .toggle:hover { color: #fff; }
+  .strength { height: 6px; border-radius: 4px; background: #232a38; margin-top: 8px; overflow: hidden; }
+  .strength > i { display: block; height: 100%; width: 0; transition: width .2s, background .2s; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+  .opts { display: flex; align-items: center; gap: 10px; margin-top: 18px; }
+  .opts label { font-size: 14px; display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--accent); }
+
+  .adv { margin-top: 14px; font-size: 13px; color: var(--muted); }
+  .adv summary { cursor: pointer; }
+  .adv select { margin-left: 8px; background: #0e1118; color: #fff;
+                border: 1px solid #2c3340; border-radius: 8px; padding: 6px 8px; }
+
+  .actions { margin-top: 22px; display: flex; gap: 10px; }
+  button.primary {
+    flex: 1; padding: 14px; font-size: 15px; font-weight: 700; color: #fff;
+    background: linear-gradient(180deg, var(--accent), var(--accent-2));
+    border: 0; border-radius: 12px; cursor: pointer;
+  }
+  button.primary:hover { filter: brightness(1.08); }
+  button.primary:disabled { opacity: .45; cursor: default; filter: none; }
+  button.ghost {
+    padding: 14px 18px; font-size: 14px; font-weight: 600; color: var(--txt);
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; cursor: pointer;
+  }
+  button.ghost:hover { border-color: var(--accent); }
+
+  .status { margin-top: 16px; font-size: 13px; min-height: 20px; }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--err); }
+  .status.warn { color: var(--warn); }
+
+  .results { margin-top: 18px; display: flex; flex-direction: column; gap: 10px; }
+  .result {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    background: #12241a; border: 1px solid #1f3d2c; border-radius: 12px; padding: 12px 14px;
+    font-size: 13px;
+  }
+  .result .nm { font-weight: 600; }
+  .result a.dl { background: var(--ok); color: #05230f; padding: 7px 12px;
+                 border-radius: 8px; font-weight: 700; text-decoration: none; white-space: nowrap; }
+  .result a.dl:hover { filter: brightness(1.08); text-decoration: none; }
+
+  .preview { margin-top: 16px; }
+  .preview iframe { width: 100%; height: 420px; border: 1px solid var(--line);
+                    border-radius: 12px; background: #fff; }
+
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 40px; line-height: 1.8; }
+  .pill { display: inline-block; padding: 2px 9px; border: 1px solid var(--line);
+          border-radius: 999px; font-size: 11px; color: var(--muted); margin: 0 3px; }
+  .note { background: #1a1a10; border: 1px solid #3d3a1f; color: #e8dfa8;
+          border-radius: 10px; padding: 12px 14px; font-size: 12.5px; margin-top: 18px; }
+
+  svg.ico { display: inline-block; vertical-align: middle; }
+  .logo .badge-lock svg { width: 22px; height: 22px; color: #a9bcff; }
+  .drop .big { color: #8fa4d6; line-height: 0; }
+  .drop .big svg { width: 42px; height: 42px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo"><span class="badge-lock"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2.5"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span> LockHTML</div>
+    <p>Turn any HTML file into a PIN-protected document &mdash; optionally viewable only once.
+       Everything happens locally in your browser; nothing is uploaded.</p>
+    <div class="navlinks">
+      <a href="https://github.com/drsamonline/lockhtml" target="_blank" rel="noopener">GitHub</a> &middot;
+      <a href="https://github.com/drsamonline/lockhtml#readme" target="_blank" rel="noopener">Docs</a> &middot;
+      <span class="pill">AES-256-GCM</span><span class="pill">PBKDF2-SHA256</span><span class="pill">100% offline</span>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" id="tabLock" data-tab="lock">Lock</button>
+    <button class="tab" id="tabUnlock" data-tab="unlock">Unlock / Verify</button>
+  </div>
+
+  <!-- LOCK -->
+  <section class="panel" id="panelLock">
+    <div class="drop" id="dropLock">
+      <div class="big"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
+      <div class="t">Drop HTML file(s) here</div>
+      <div class="s">or click to choose &mdash; .html / .htm</div>
+      <input type="file" id="fileLock" accept=".html,.htm,text/html" multiple hidden>
+    </div>
+    <div class="filelist" id="listLock"></div>
+
+    <label class="fld" for="pinLock">Secret PIN</label>
+    <div class="pinrow">
+      <input type="password" id="pinLock" inputmode="numeric" autocomplete="new-password" placeholder="Enter a PIN">
+      <button class="toggle" id="togglePin" type="button">Show</button>
+    </div>
+    <div class="strength"><i id="strengthBar"></i></div>
+    <div class="hint" id="strengthText">The PIN cannot be recovered &mdash; if it is lost, the file cannot be opened.</div>
+
+    <div class="opts">
+      <label><input type="checkbox" id="oneTime"> One-time view (expire after first open)</label>
+    </div>
+
+    <details class="adv">
+      <summary>Advanced</summary>
+      <label>PBKDF2 iterations:
+        <select id="iterations">
+          <option value="100000">100,000 (fast)</option>
+          <option value="250000" selected>250,000 (recommended)</option>
+          <option value="600000">600,000 (strong)</option>
+        </select>
+      </label>
+    </details>
+
+    <div class="actions">
+      <button class="primary" id="lockBtn" disabled>Lock files</button>
+      <button class="ghost" id="clearBtn" type="button">Clear</button>
+    </div>
+    <div class="status" id="statusLock"></div>
+    <div class="results" id="resultsLock"></div>
+  </section>
+
+  <!-- UNLOCK -->
+  <section class="panel hidden" id="panelUnlock">
+    <div class="drop" id="dropUnlock">
+      <div class="big"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2.5"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg></div>
+      <div class="t">Drop a locked .html file here</div>
+      <div class="s">or click to choose</div>
+      <input type="file" id="fileUnlock" accept=".html,.htm,text/html" hidden>
+    </div>
+    <div class="filelist" id="listUnlock"></div>
+
+    <label class="fld" for="pinUnlock">PIN</label>
+    <div class="pinrow">
+      <input type="password" id="pinUnlock" autocomplete="off" placeholder="Enter the PIN">
+    </div>
+
+    <div class="actions">
+      <button class="primary" id="unlockBtn" disabled>Unlock</button>
+      <button class="ghost" id="dlPlain" type="button" disabled>Download decrypted</button>
+    </div>
+    <div class="status" id="statusUnlock"></div>
+    <div class="preview" id="preview"></div>
+  </section>
+
+  <div class="note">
+    <strong>Security note:</strong> the PIN provides real encryption &mdash; without it the file is
+    unreadable even if the source is inspected. "One-time view" is a browser-enforced deterrent,
+    not a server guarantee: a recipient can still copy the file or screenshot the decrypted page.
+  </div>
+
+  <footer>
+    LockHTML &middot; MIT License &middot; built for the web, runs on any OS<br>
+    CLI: <code>pip install lockhtml</code> then <code>lockhtml lock file.html --pin 1234</code>
+  </footer>
+</div>
+
+<script>
+"use strict";
+/* The viewer template is injected here at build time by tools/build_gui.py. */
+const VIEWER_TEMPLATE = "\u003c!DOCTYPE html>\n\u003chtml lang=\"en\">\n\u003chead>\n\u003cmeta charset=\"utf-8\">\n\u003cmeta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\u003cmeta name=\"robots\" content=\"noindex, nofollow\">\n\u003ctitle>Protected document\u003c/title>\n\u003cstyle>\n  :root { color-scheme: dark; }\n  * { box-sizing: border-box; }\n  html, body { margin: 0; height: 100%; }\n  body {\n    font-family: system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif;\n    background: radial-gradient(1200px 600px at 50% -10%, #1b2130 0%, #0f1115 60%);\n    color: #e8eaed; display: flex; align-items: center; justify-content: center;\n  }\n  .card {\n    width: min(430px, 92vw); padding: 30px 28px;\n    background: #171a21; border: 1px solid #262b36; border-radius: 16px;\n    box-shadow: 0 18px 50px rgba(0,0,0,.5); text-align: center;\n  }\n  .lock { font-size: 32px; margin-bottom: 12px; }\n  h1 { font-size: 17px; font-weight: 600; margin: 0 0 6px; }\n  p.sub { font-size: 13px; color: #9aa3b2; margin: 0 0 20px; line-height: 1.5; }\n  input[type=password] {\n    width: 100%; padding: 13px 14px; font-size: 17px; letter-spacing: 3px;\n    background: #0f1115; color: #fff; border: 1px solid #2c3340; border-radius: 10px;\n    text-align: center; outline: none; transition: border-color .15s;\n  }\n  input[type=password]:focus { border-color: #4c7dff; }\n  button {\n    width: 100%; margin-top: 12px; padding: 13px; font-size: 15px; font-weight: 600;\n    color: #fff; background: linear-gradient(180deg,#5a86ff,#3a6bf0);\n    border: 0; border-radius: 10px; cursor: pointer; transition: filter .15s;\n  }\n  button:hover { filter: brightness(1.08); }\n  button:disabled { opacity: .5; cursor: default; filter: none; }\n  .msg { min-height: 18px; font-size: 13px; margin-top: 12px; }\n  .msg.err { color: #ff6b6b; }\n  .msg.warn { color: #ffb454; }\n  .meta { font-size: 11px; color: #6b7280; margin-top: 18px; line-height: 1.6; }\n  #stage { position: fixed; inset: 0; background: #0f1115; }\n  #viewer { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }\n  .hidden { display: none !important; }\n\u003c/style>\n\u003c/head>\n\u003cbody>\n\n\u003cdiv class=\"card\" id=\"gate\">\n  \u003cdiv class=\"lock\" id=\"lockIcon\">&#128274;\u003c/div>\n  \u003ch1 id=\"gateTitle\">Protected document\u003c/h1>\n  \u003cp class=\"sub\" id=\"gateSub\">Enter the PIN to unlock this document.\u003c/p>\n  \u003cinput type=\"password\" id=\"pin\" inputmode=\"numeric\" autocomplete=\"off\"\n         placeholder=\"Enter PIN\" aria-label=\"PIN\">\n  \u003cbutton id=\"unlock\">Unlock\u003c/button>\n  \u003cdiv class=\"msg\" id=\"msg\" role=\"status\" aria-live=\"polite\">\u003c/div>\n  \u003cdiv class=\"meta\" id=\"meta\">\u003c/div>\n\u003c/div>\n\n\u003cdiv id=\"stage\" class=\"hidden\">\n  \u003ciframe id=\"viewer\" sandbox=\"allow-scripts allow-forms allow-popups\">\u003c/iframe>\n\u003c/div>\n\n\u003cscript id=\"payload\" type=\"application/json\">__PAYLOAD__\u003c/script>\n\u003cscript>\n(function () {\n  \"use strict\";\n  var payload = JSON.parse(document.getElementById(\"payload\").textContent);\n  var $ = function (id) { return document.getElementById(id); };\n  var burnKey = \"lockhtml_burn_\" + payload.id;\n\n  function b64ToBytes(s) {\n    var bin = atob(s), out = new Uint8Array(bin.length);\n    for (var i = 0; i \u003c bin.length; i++) out[i] = bin.charCodeAt(i);\n    return out;\n  }\n  function subtle() {\n    return (window.crypto && window.crypto.subtle) ? window.crypto.subtle : null;\n  }\n  async function deriveKey(pin) {\n    var s = subtle();\n    var baseKey = await s.importKey(\n      \"raw\", new TextEncoder().encode(pin), { name: \"PBKDF2\" }, false, [\"deriveKey\"]);\n    return s.deriveKey(\n      { name: \"PBKDF2\", salt: b64ToBytes(payload.salt),\n        iterations: payload.iter, hash: \"SHA-256\" },\n      baseKey, { name: \"AES-GCM\", length: 256 }, false, [\"decrypt\"]);\n  }\n  async function decrypt(pin) {\n    var s = subtle();\n    var key = await deriveKey(pin);\n    var buf = await s.decrypt({ name: \"AES-GCM\", iv: b64ToBytes(payload.iv) },\n                              key, b64ToBytes(payload.ct));\n    return new TextDecoder().decode(buf);\n  }\n  function isBurned() {\n    try { return payload.onetime && localStorage.getItem(burnKey) === \"1\"; }\n    catch (e) { return false; }\n  }\n  function markBurned() {\n    try { localStorage.setItem(burnKey, \"1\"); } catch (e) {}\n  }\n  function showExpired() {\n    $(\"lockIcon\").innerHTML = \"&#128465;\";\n    $(\"gateTitle\").textContent = \"This document has expired\";\n    $(\"gateSub\").textContent =\n      \"It was set to be viewable once, and has already been opened.\";\n    $(\"pin\").classList.add(\"hidden\");\n    $(\"unlock\").classList.add(\"hidden\");\n    $(\"msg\").textContent = \"No further views are permitted.\";\n    $(\"msg\").className = \"msg warn\";\n  }\n  function reveal(html) {\n    $(\"viewer\").srcdoc = html;\n    $(\"stage\").classList.remove(\"hidden\");\n    $(\"gate\").classList.add(\"hidden\");\n    html = null; // best-effort: drop the plaintext reference\n  }\n  async function attempt() {\n    var pin = $(\"pin\").value;\n    if (!pin) { $(\"msg\").textContent = \"Please enter the PIN.\"; $(\"msg\").className = \"msg err\"; return; }\n    if (!subtle()) {\n      $(\"msg\").textContent = \"This browser cannot decrypt the file (needs Web Crypto).\";\n      $(\"msg\").className = \"msg err\"; return;\n    }\n    $(\"unlock\").disabled = true;\n    $(\"msg\").textContent = \"Decrypting\\u2026\";\n    $(\"msg\").className = \"msg\";\n    var html;\n    try {\n      html = await decrypt(pin);\n    } catch (e) {\n      $(\"unlock\").disabled = false;\n      $(\"msg\").textContent = \"Wrong PIN. Try again.\";\n      $(\"msg\").className = \"msg err\";\n      return;\n    }\n    if (payload.onetime) markBurned();\n    reveal(html);\n  }\n\n  $(\"unlock\").addEventListener(\"click\", attempt);\n  $(\"pin\").addEventListener(\"keydown\", function (e) { if (e.key === \"Enter\") attempt(); });\n\n  if (payload.onetime) {\n    $(\"meta\").textContent =\n      \"One-time view \\u2014 opening this document will expire it in this browser.\";\n  }\n  if (isBurned()) { showExpired(); } else { $(\"pin\").focus(); }\n\n  // Deterrents only (not security): make casual copying of the open view harder.\n  document.addEventListener(\"contextmenu\", function (e) {\n    if (!$(\"stage\").classList.contains(\"hidden\")) e.preventDefault();\n  });\n  document.addEventListener(\"keydown\", function (e) {\n    if ($(\"stage\").classList.contains(\"hidden\")) return;\n    var k = (e.key || \"\").toLowerCase();\n    if ((e.ctrlKey || e.metaKey) && (k === \"p\" || k === \"s\" || k === \"u\")) e.preventDefault();\n  });\n})();\n\u003c/script>\n\u003c/body>\n\u003c/html>\n";
+
+const $ = (id) => document.getElementById(id);
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+/* ---------- crypto helpers ---------- */
+function bytesToB64(bytes) {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+function b64ToBytes(s) {
+  const bin = atob(s), out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function hex(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+async function deriveKey(pin, salt, iterations, usage) {
+  const base = await crypto.subtle.importKey(
+    "raw", enc.encode(pin), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
+    base, { name: "AES-GCM", length: 256 }, false, usage);
+}
+async function makePayload(text, pin, oneTime, iterations) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(pin, salt, iterations, ["encrypt"]);
+  const ct = new Uint8Array(await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv }, key, enc.encode(text)));
+  const id = hex(new Uint8Array(await crypto.subtle.digest("SHA-256", ct)).slice(0, 8));
+  return { v: 1, kdf: "PBKDF2-SHA256", iter: iterations,
+           salt: bytesToB64(salt), iv: bytesToB64(iv), ct: bytesToB64(ct),
+           id, onetime: !!oneTime };
+}
+async function decryptPayload(payload, pin) {
+  const salt = b64ToBytes(payload.salt), iv = b64ToBytes(payload.iv);
+  const key = await deriveKey(pin, salt, payload.iter || 250000, ["decrypt"]);
+  const buf = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, b64ToBytes(payload.ct));
+  return dec.decode(buf);
+}
+function lockedName(name) {
+  return name.replace(/\.html?$/i, "") + ".locked.html";
+}
+function download(filename, text) {
+  const blob = new Blob([text], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+function extractPayload(html) {
+  const m = html.match(/<script id="payload" type="application\/json">([\s\S]*?)<\/script>/);
+  if (!m) throw new Error("not a LockHTML file");
+  return JSON.parse(m[1]);
+}
+
+/* ---------- tabs ---------- */
+document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
+  const lock = t.dataset.tab === "lock";
+  $("panelLock").classList.toggle("hidden", !lock);
+  $("panelUnlock").classList.toggle("hidden", lock);
+}));
+
+/* ---------- dropzones ---------- */
+function wireDrop(dropId, inputId, onFiles) {
+  const drop = $(dropId), input = $(inputId);
+  drop.addEventListener("click", () => input.click());
+  input.addEventListener("change", () => onFiles([...input.files]));
+  ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => {
+    e.preventDefault(); drop.classList.add("over");
+  }));
+  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => {
+    e.preventDefault(); drop.classList.remove("over");
+  }));
+  drop.addEventListener("drop", e => onFiles([...e.dataTransfer.files]));
+}
+
+/* ---------- LOCK ---------- */
+let lockFiles = [];
+function renderLockList() {
+  const box = $("listLock");
+  box.innerHTML = "";
+  lockFiles.forEach((f, i) => {
+    const el = document.createElement("div");
+    el.className = "fileitem";
+    el.innerHTML = `<span class="nm">${f.name}</span>
+                    <span class="sz">${(f.size/1024).toFixed(1)} KB</span>`;
+    const rm = document.createElement("button");
+    rm.textContent = "\u00d7";
+    rm.title = "Remove";
+    rm.addEventListener("click", () => { lockFiles.splice(i, 1); renderLockList(); });
+    el.appendChild(rm);
+    box.appendChild(el);
+  });
+  $("lockBtn").disabled = lockFiles.length === 0 || !$("pinLock").value;
+}
+wireDrop("dropLock", "fileLock", files => {
+  for (const f of files) {
+    if (!/\.html?$/i.test(f.name)) continue;
+    if (!lockFiles.some(x => x.name === f.name && x.size === f.size)) lockFiles.push(f);
+  }
+  renderLockList();
+});
+
+function scorePin(pin) {
+  let s = 0;
+  if (pin.length >= 4) s++;
+  if (pin.length >= 8) s++;
+  if (/[a-z]/.test(pin) && /[A-Z]/.test(pin)) s++;
+  if (/\d/.test(pin)) s++;
+  if (/[^A-Za-z0-9]/.test(pin)) s++;
+  return Math.min(s, 4);
+}
+$("pinLock").addEventListener("input", () => {
+  const pin = $("pinLock").value;
+  const s = scorePin(pin);
+  const bar = $("strengthBar");
+  const colors = ["#ff6b6b", "#ffb454", "#ffd166", "#33d17a", "#33d17a"];
+  const widths = ["15%", "35%", "60%", "85%", "100%"];
+  const labels = ["Very weak", "Weak", "Fair", "Strong", "Very strong"];
+  bar.style.width = pin ? widths[s] : "0";
+  bar.style.background = colors[s];
+  $("strengthText").textContent = pin
+    ? `PIN strength: ${labels[s]}`
+    : "The PIN cannot be recovered \u2014 if it is lost, the file cannot be opened.";
+  renderLockList();
+});
+$("togglePin").addEventListener("click", () => {
+  const i = $("pinLock");
+  const show = i.type === "password";
+  i.type = show ? "text" : "password";
+  $("togglePin").textContent = show ? "Hide" : "Show";
+});
+
+$("lockBtn").addEventListener("click", async () => {
+  const pin = $("pinLock").value;
+  if (!pin || lockFiles.length === 0) return;
+  const oneTime = $("oneTime").checked;
+  const iterations = parseInt($("iterations").value, 10);
+  const results = $("resultsLock");
+  results.innerHTML = "";
+  $("statusLock").className = "status";
+  $("statusLock").textContent = "Encrypting\u2026";
+  $("lockBtn").disabled = true;
+
+  let done = 0;
+  for (const f of lockFiles) {
+    try {
+      const text = await f.text();
+      const payload = await makePayload(text, pin, oneTime, iterations);
+      const locked = VIEWER_TEMPLATE.replace("__PAYLOAD__", JSON.stringify(payload));
+      const outName = lockedName(f.name);
+      download(outName, locked);
+
+      const row = document.createElement("div");
+      row.className = "result";
+      row.innerHTML = `<span class="nm"><span style="color:var(--ok)">\u2714</span> ${outName}${oneTime ? " &middot; one-time" : ""}</span>`;
+      const a = document.createElement("a");
+      a.className = "dl"; a.textContent = "Download again";
+      const blob = new Blob([locked], { type: "text/html" });
+      a.href = URL.createObjectURL(blob); a.download = outName;
+      row.appendChild(a);
+      results.appendChild(row);
+      done++;
+    } catch (e) {
+      const row = document.createElement("div");
+      row.className = "result";
+      row.style.background = "#241212"; row.style.borderColor = "#3d1f1f";
+      row.textContent = `\u2716 ${f.name}: ${e.message}`;
+      results.appendChild(row);
+    }
+  }
+  $("lockBtn").disabled = false;
+  if (done) {
+    $("statusLock").className = "status ok";
+    $("statusLock").textContent = `Locked ${done} file(s). Check your downloads.`;
+  }
+});
+$("clearBtn").addEventListener("click", () => {
+  lockFiles = []; renderLockList();
+  $("pinLock").value = ""; $("oneTime").checked = false;
+  $("resultsLock").innerHTML = ""; $("statusLock").textContent = "";
+  $("strengthBar").style.width = "0";
+  $("strengthText").textContent =
+    "The PIN cannot be recovered \u2014 if it is lost, the file cannot be opened.";
+});
+
+/* ---------- UNLOCK ---------- */
+let unlockFile = null, plaintext = null;
+wireDrop("dropUnlock", "fileUnlock", files => {
+  if (!files.length) return;
+  unlockFile = files[0];
+  $("listUnlock").innerHTML =
+    `<div class="fileitem"><span class="nm">${unlockFile.name}</span>
+     <span class="sz">${(unlockFile.size/1024).toFixed(1)} KB</span></div>`;
+  $("unlockBtn").disabled = false;
+  $("preview").innerHTML = ""; $("statusUnlock").textContent = "";
+  $("dlPlain").disabled = true; plaintext = null;
+});
+$("unlockBtn").addEventListener("click", async () => {
+  if (!unlockFile) return;
+  const pin = $("pinUnlock").value;
+  $("statusUnlock").className = "status";
+  $("statusUnlock").textContent = "Decrypting\u2026";
+  try {
+    const html = await unlockFile.text();
+    const payload = extractPayload(html);
+    plaintext = await decryptPayload(payload, pin);
+    $("statusUnlock").className = "status ok";
+    $("statusUnlock").textContent =
+      "Unlocked." + (payload.onetime ? " (This file was marked one-time.)" : "");
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups");
+    iframe.srcdoc = plaintext;
+    $("preview").innerHTML = ""; $("preview").appendChild(iframe);
+    $("dlPlain").disabled = false;
+  } catch (e) {
+    $("statusUnlock").className = "status err";
+    $("statusUnlock").textContent = "Wrong PIN, or not a LockHTML file.";
+    $("preview").innerHTML = ""; $("dlPlain").disabled = true;
+  }
+});
+$("dlPlain").addEventListener("click", () => {
+  if (plaintext == null) return;
+  const name = (unlockFile.name.replace(/\.locked\.html?$/i, "") || "document") + ".html";
+  download(name, plaintext);
+});
+</script>
+</body>
+</html>

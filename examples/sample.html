@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Confidential - Example</title>
+<style>
+  body { font-family: Georgia, "Times New Roman", serif; max-width: 640px;
+         margin: 60px auto; padding: 0 20px; color: #1a1a1a; line-height: 1.7; }
+  h1 { font-size: 22px; border-bottom: 2px solid #333; padding-bottom: 8px; }
+  .stamp { color: #b00020; font-weight: bold; letter-spacing: 1px;
+           text-transform: uppercase; font-size: 13px; }
+  .box { background: #f6f6f6; border-left: 4px solid #444; padding: 12px 16px; margin: 20px 0; }
+  code { background: #eee; padding: 2px 6px; border-radius: 4px; }
+</style>
+</head>
+<body>
+  <p class="stamp">Confidential - for intended recipient only</p>
+  <h1>Example Protected Document</h1>
+  <p>This document was locked with <strong>LockHTML</strong>. Its contents are stored
+     AES-256-GCM encrypted inside <code>sample.locked.html</code> and are unreadable
+     until the correct PIN is entered.</p>
+  <div class="box">
+    <strong>Example secret:</strong> the launch code is <code>ORION-7742</code>.
+  </div>
+  <p>Try it: open <code>sample.locked.html</code> in any browser and enter the PIN
+     <code>4821</code>.</p>
+</body>
+</html>

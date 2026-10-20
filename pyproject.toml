@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lockhtml"
+version = "1.0.0"
+description = "PIN-protect and one-time-view any HTML file with AES-256-GCM. Cross-platform CLI plus a browser-based GUI."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Dr Sohil Momin", email = "sohilmomin2000@gmail.com" }]
+keywords = ["html", "encryption", "aes", "security", "pin", "self-destruct", "cli", "gui"]
+dependencies = ["cryptography>=41"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Security :: Cryptography",
+]
+
+[project.urls]
+Homepage = "https://github.com/drsamonline/lockhtml"
+Repository = "https://github.com/drsamonline/lockhtml"
+Issues = "https://github.com/drsamonline/lockhtml/issues"
+"Live GUI" = "https://drsamonline.github.io/lockhtml/"
+Changelog = "https://github.com/drsamonline/lockhtml/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "build>=1.0"]
+
+[project.scripts]
+lockhtml = "lockhtml.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["lockhtml*"]
+
+[tool.setuptools.package-data]
+lockhtml = ["templates/*.html", "gui/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

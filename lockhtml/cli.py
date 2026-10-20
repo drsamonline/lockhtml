@@ -10,11 +10,16 @@ from pathlib import Path
 
 from . import __version__
 from .core import (
+    DEFAULT_CHUNK_SIZE,
     DEFAULT_KDF,
     build_locked_html,
+    extract_payload,
     generate_signing_key,
     load_signing_key,
+    render_viewer,
     save_signing_key,
+    stream_decrypt_file,
+    stream_encrypt_file,
     unlock,
 )
 
@@ -55,49 +60,59 @@ def cmd_lock(args: argparse.Namespace) -> int:
 
     rc = 0
     for src in inputs:
-        try:
-            is_html = src.suffix.lower() in (".html", ".htm")
-            data = _read_bytes(src)
-            locked = build_locked_html(
-                data, args.pin,
-                kdf=args.kdf,
-                keyfile=keyfile,
-                one_time=args.one_time,
-                max_views=args.max_views,
-                not_before=args.not_before,
-                expires=args.expires,
-                watermark=args.watermark,
-                kind="html" if is_html else "file",
-                name=None if is_html else src.name,
-                sign_key=sign_key,
-                decoy=decoy,
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            print(f"error: {src}: {exc}", file=sys.stderr)
-            rc = 1
-            continue
-
         if args.output:
             dest = Path(args.output)
         else:
             stem = src.with_suffix("")
             dest = (outdir / (stem.name + LOCKED_SUFFIX)) if outdir else Path(str(stem) + LOCKED_SUFFIX)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(locked, encoding="utf-8")
+
+        is_html = src.suffix.lower() in (".html", ".htm")
+        kind = "html" if is_html else "file"
+        name = None if is_html else src.name
+
+        try:
+            if args.stream:
+                bin_path = dest.with_suffix(".bin")
+                payload = stream_encrypt_file(
+                    str(src), args.pin, str(bin_path),
+                    kdf=args.kdf, keyfile=keyfile, chunk_size=args.chunk_size * 1024,
+                    one_time=args.one_time, max_views=args.max_views,
+                    not_before=args.not_before, expires=args.expires,
+                    watermark=args.watermark, kind=kind, name=name, sign_key=sign_key,
+                )
+                dest.write_text(render_viewer(payload), encoding="utf-8")
+                extra = f" + {bin_path}"
+            else:
+                locked = build_locked_html(
+                    _read_bytes(src), args.pin,
+                    kdf=args.kdf, keyfile=keyfile, one_time=args.one_time,
+                    max_views=args.max_views, not_before=args.not_before,
+                    expires=args.expires, watermark=args.watermark,
+                    kind=kind, name=name, sign_key=sign_key, decoy=decoy,
+                )
+                dest.write_text(locked, encoding="utf-8")
+                extra = ""
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"error: {src}: {exc}", file=sys.stderr)
+            rc = 1
+            continue
 
         tags = []
         if args.kdf:
             tags.append(args.kdf)
+        if args.stream:
+            tags.append("streaming")
         if args.one_time or args.max_views:
             tags.append("one-time" if (args.one_time or args.max_views == 1) else f"max-views={args.max_views}")
         if keyfile:
             tags.append("keyfile")
         if sign_key:
             tags.append("signed")
-        if decoy:
+        if decoy and not args.stream:
             tags.append("decoy")
         suffix = ("  [" + ", ".join(tags) + "]") if tags else ""
-        print(f"locked {src} -> {dest}{suffix}")
+        print(f"locked {src} -> {dest}{extra}{suffix}")
     return rc
 
 
@@ -107,13 +122,25 @@ def cmd_unlock(args: argparse.Namespace) -> int:
         print(f"error: no such file: {src}", file=sys.stderr)
         return 2
     keyfile = Path(args.keyfile).read_bytes() if args.keyfile else None
+    text = src.read_text(encoding="utf-8")
     try:
-        plaintext = unlock(src.read_text(encoding="utf-8"), args.pin, keyfile)
+        payload = extract_payload(text)
+        if payload.get("container") == "stream":
+            data_path = Path(args.data) if args.data else src.with_suffix(".bin")
+            if not data_path.is_file():
+                print(f"error: streaming data file not found: {data_path}", file=sys.stderr)
+                return 2
+            plaintext = stream_decrypt_file(
+                str(data_path), payload, args.pin,
+                str(args.output) if args.output else None, keyfile)
+        else:
+            plaintext = unlock(text, args.pin, keyfile)
     except Exception:
         print("error: wrong PIN, missing keyfile, or not a LockHTML file", file=sys.stderr)
         return 1
     if args.output:
-        Path(args.output).write_bytes(plaintext)
+        if plaintext is not None:
+            Path(args.output).write_bytes(plaintext)
         print(f"unlocked {src} -> {args.output}")
     else:
         sys.stdout.buffer.write(plaintext)
@@ -178,12 +205,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_lock.add_argument("--sign", default=None, help="Ed25519 private key (PEM) to sign the file")
     p_lock.add_argument("--decoy-pin", default=None, help="duress PIN that opens a harmless decoy page")
     p_lock.add_argument("--decoy-file", default=None, help="HTML file to use as the decoy page")
+    p_lock.add_argument("--stream", action="store_true",
+                        help="streaming container: write ciphertext to a sidecar .bin (for large files)")
+    p_lock.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE // 1024,
+                        help="streaming chunk size in KiB (default: 1024)")
     p_lock.set_defaults(func=cmd_lock)
 
     p_unlock = sub.add_parser("unlock", help="decrypt a locked file with its PIN")
     p_unlock.add_argument("input", help="locked .html file")
     p_unlock.add_argument("--pin", required=True, help="PIN / passphrase")
     p_unlock.add_argument("--keyfile", default=None, help="keyfile, if one is required")
+    p_unlock.add_argument("--data", default=None, help="sidecar .bin for a streaming container")
     p_unlock.add_argument("-o", "--output", help="write plaintext here (default: stdout)")
     p_unlock.set_defaults(func=cmd_unlock)
 

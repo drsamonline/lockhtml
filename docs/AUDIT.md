@@ -24,6 +24,27 @@
 4. **Plaintext-leak testing.** Assertions that the secret string never appears in a locked file.
 5. **Property checks.** Randomness of salt/IV, Unicode round-trips, and legacy v1 readability.
 
+## Streaming container review (v1.2)
+
+The chunked container was reviewed specifically for the failure modes that naive chunking
+introduces:
+
+| Risk | Mitigation | Test |
+| --- | --- | --- |
+| Nonce reuse across chunks | Nonce = `base_iv \|\| uint32_be(index)`; a fresh `base_iv` per file | round-trip, many-chunk |
+| Chunk reordering / swapping | Chunk index bound as AAD | tampered-chunk test |
+| Truncation | MAC covers `chunkCount` and every tag | truncation test |
+| Extra data appended | Trailing bytes rejected | trailing-data test |
+| Metadata tampering (limits, size, count) | Metadata is inside the MAC input | metadata-tamper test |
+| Wrong container | 5-byte magic checked first | browser e2e |
+
+All of these are covered by automated tests, and the browser path is exercised in CI against files
+produced by the Python core.
+
+**Known limitation.** Assembling the decrypted output in the browser still costs O(file), because the
+viewer collects the chunks into a `Blob`. Reading and decryption are O(chunk size). Constant-memory
+output needs the File System Access API and is on the roadmap.
+
 ## Findings
 
 ### Fixed during this cycle
@@ -33,6 +54,7 @@
 | 1 | The keyfile was accepted as a parameter but **not actually mixed into the Argon2 key**, so a keyfile-protected file could be opened with the PIN alone. | **High** | Keyfile is now mixed via `HMAC-SHA256(derived, keyfile)` in both Python and JS, with tests and a browser end-to-end check. |
 | 2 | `unlock()` returned text, silently corrupting binary payloads. | Medium | Returns raw bytes; binary round-trip is tested. |
 | 3 | A minifier configuration produced assets that failed to parse. | Low | Config corrected; CI now rebuilds and diffs the generated assets so a broken build cannot be committed. |
+| 4 | `unlock` with `-o` stopped writing the plaintext for the embedded container after the streaming branch was added. | Medium | Caught by the test suite; fixed and covered by `test_cli_lock_and_unlock`. |
 
 ### Reviewed and judged acceptable
 

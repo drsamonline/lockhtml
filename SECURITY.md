@@ -17,7 +17,12 @@ We aim to acknowledge reports within a few days.
   - PBKDF2 iterations: 250,000.
 - Random salt (16 bytes) and IV (12 bytes) per file, from a CSPRNG.
 - **Keyfile**: optional; mixed in as `HMAC-SHA256(derived_key, keyfile_bytes)`.
-- **Signing**: optional Ed25519 over the ciphertext; verified in-browser before display.
+- **Signing**: optional Ed25519 over the ciphertext (embedded) or over the MAC input (streaming);
+  verified in-browser before display.
+- **Streaming container**: AES-256-GCM per 1 MiB chunk, nonce = `base_iv || uint32_be(index)`,
+  chunk index bound as Additional Authenticated Data, and a whole-file HMAC-SHA256 over the
+  metadata and all chunk tags. This detects reordering, duplication, truncation and metadata
+  tampering. See [docs/FORMAT.md](docs/FORMAT.md#streaming-container).
 
 Full details are in [`docs/FORMAT.md`](docs/FORMAT.md). A self-audit is recorded in
 [`docs/AUDIT.md`](docs/AUDIT.md) — note that this is a *self*-review, not an independent audit.
@@ -29,6 +34,8 @@ LockHTML is a **client-side** tool. Understanding its threat model matters:
 - The PIN provides real confidentiality: the document is encrypted with AES-256-GCM and the key is
   derived with Argon2id. Without the PIN (and keyfile, if used) the content is unreadable, even from
   the raw source.
+- **The streaming container's MAC is keyed by the PIN-derived key**, so it protects integrity but
+  not authenticity — only an Ed25519 signature proves who produced the file. Sign when that matters.
 - **View limits, expiry, watermarking and one-time view are best-effort.** Enforcement happens in
   the browser (IndexedDB). A recipient who controls their machine can defeat it — copy the file, use
   another browser/profile, clear storage, or screenshot the decrypted page. This is a known and

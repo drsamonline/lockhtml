@@ -69,6 +69,10 @@
     <label id="kfLabel">Keyfile required</label>
     <input type="file" id="keyfile">
   </div>
+  <div class="kf hidden" id="dataRow">
+    <label id="dataLabel">Data file required</label>
+    <input type="file" id="datafile">
+  </div>
   <input type="password" id="pin" inputmode="numeric" autocomplete="off" placeholder="Enter PIN" aria-label="PIN">
   <button id="unlock">Unlock</button>
   <div class="msg" id="msg" role="status" aria-live="polite"></div>
@@ -106,7 +110,9 @@
       verifyBad: "WARNING: signature check FAILED. Do not trust this file.",
       verifyNa: "A signature is present but this browser cannot verify it.",
       noKeyfile: "This document also needs its keyfile.", onetime: "One-time view.",
-      norender: "No Web Crypto in this browser.", nokdf: "This file needs Argon2 support." },
+      norender: "No Web Crypto in this browser.", nokdf: "This file needs Argon2 support.",
+      data: "Data file required (the .bin you were sent)",
+      noData: "This document also needs its data file." },
     hi: { title: "\u0938\u0941\u0930\u0915\u094d\u0937\u093f\u0924 \u0926\u0938\u094d\u0924\u093e\u0935\u0947\u091c\u093c", sub: "\u0907\u0938 \u0926\u0938\u094d\u0924\u093e\u0935\u0947\u091c\u093c \u0915\u094b \u0916\u094b\u0932\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f PIN \u0926\u0930\u094d\u091c \u0915\u0930\u0947\u0902\u0964",
       ph: "PIN \u0926\u0930\u094d\u091c \u0915\u0930\u0947\u0902", unlock: "\u0916\u094b\u0932\u0947\u0902", kf: "\u0915\u0940\u092b\u093c\u093e\u0907\u0932 \u0906\u0935\u0936\u094d\u092f\u0915 \u0939\u0948",
       wrong: "\u0917\u0932\u0924 PIN\u0964 \u092b\u093f\u0930 \u0938\u0947 \u092a\u094d\u0930\u092f\u093e\u0938 \u0915\u0930\u0947\u0902\u0964", empty: "\u0915\u0943\u092a\u092f\u093e PIN \u0926\u0930\u094d\u091c \u0915\u0930\u0947\u0902\u0964",
@@ -139,6 +145,7 @@
   $("pin").setAttribute("placeholder", T.ph);
   setText("unlock", T.unlock);
   setText("kfLabel", T.kf);
+  setText("dataLabel", T.data || I18N.en.data);
   setText("dlTitle", T.fileReady);
   setText("dlBtn", T.download);
 
@@ -296,6 +303,69 @@
     return new Uint8Array(await inp.files[0].arrayBuffer());
   }
 
+  /* ---- streaming container: read + decrypt the sidecar one chunk at a time ---- */
+  function equalBytes(a, b) {
+    if (a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+  function metaString(p) {
+    var kp = p.kdfparams || {};
+    var kps = ("m" in kp) ? (kp.m + "," + kp.t + "," + kp.p) : String(kp.iter);
+    return ["v2", p.kdf, kps, String(p.chunkSize), String(p.chunkCount), String(p.kind),
+            (p.name || ""), String(p.salt), String(p.baseiv),
+            (p.maxviews == null ? "" : String(p.maxviews)),
+            (p.notbefore || ""), (p.expires || "")].join("|");
+  }
+  async function streamDecrypt(dataFile, pin, keyfile) {
+    var s = subtle();
+    var raw = await rawKey(pin, b64ToBytes(payload.salt), keyfile);
+    var aesKey = await s.importKey("raw", raw, { name: "AES-GCM" }, false, ["decrypt"]);
+    var MAGIC = "LKHS1";
+    var head = new Uint8Array(await dataFile.slice(0, MAGIC.length).arrayBuffer());
+    var hs = ""; for (var j = 0; j < head.length; j++) hs += String.fromCharCode(head[j]);
+    if (hs !== MAGIC) throw new Error("container");
+
+    var baseIv = b64ToBytes(payload.baseiv);
+    var cs = payload.chunkSize, n = payload.chunkCount, offset = MAGIC.length;
+    var parts = [], tags = [];
+    for (var i = 0; i < n; i++) {
+      var size = (i === n - 1) ? (dataFile.size - offset) : (cs + 16);
+      if (size < 16) throw new Error("truncated");
+      var ct = new Uint8Array(await dataFile.slice(offset, offset + size).arrayBuffer());
+      offset += size;
+      var nonce = new Uint8Array(12); nonce.set(baseIv, 0);
+      new DataView(nonce.buffer).setUint32(8, i, false);
+      var aad = new Uint8Array(4); new DataView(aad.buffer).setUint32(0, i, false);
+      parts.push(new Uint8Array(await s.decrypt(
+        { name: "AES-GCM", iv: nonce, additionalData: aad }, aesKey, ct)));
+      tags.push(ct.slice(ct.length - 16));
+    }
+    if (offset !== dataFile.size) throw new Error("trailing");
+
+    var meta = enc(metaString(payload));
+    var total = 0; for (var a = 0; a < tags.length; a++) total += tags[a].length;
+    var macInput = new Uint8Array(meta.length + total);
+    macInput.set(meta, 0);
+    var o = meta.length;
+    for (var b = 0; b < tags.length; b++) { macInput.set(tags[b], o); o += tags[b].length; }
+
+    var hk = await s.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    var mac = new Uint8Array(await s.sign("HMAC", hk, macInput));
+    if (!equalBytes(mac, b64ToBytes(payload.metamac))) throw new Error("integrity");
+
+    if (payload.sig) {
+      var pub = await s.importKey("raw", b64ToBytes(payload.sig.pub), { name: "Ed25519" }, false, ["verify"]);
+      var ok = await s.verify({ name: "Ed25519" }, pub, b64ToBytes(payload.sig.val), macInput);
+      if (!ok) throw new Error("sig");
+    }
+
+    var outLen = 0; for (var c = 0; c < parts.length; c++) outLen += parts[c].length;
+    var out = new Uint8Array(outLen), pos = 0;
+    for (var d = 0; d < parts.length; d++) { out.set(parts[d], pos); pos += parts[d].length; }
+    return out;
+  }
+
   async function attempt() {
     var pin = $("pin").value;
     if (!pin) { $("msg").textContent = T.empty; $("msg").className = "msg err"; return; }
@@ -303,21 +373,41 @@
     var keyfile = await readKeyfile();
     if (payload.keyfile && !keyfile) { $("msg").textContent = T.noKeyfile; $("msg").className = "msg err"; return; }
 
-    var sigState = await verifySig();
-    if (sigState === "bad") {
-      $("msg").textContent = T.verifyBad; $("msg").className = "msg err";
-      return;
+    var isStream = payload.container === "stream";
+    var dataFile = null;
+    if (isStream) {
+      dataFile = $("datafile").files[0];
+      if (!dataFile) { $("msg").textContent = (T.noData || I18N.en.noData); $("msg").className = "msg err"; return; }
     }
 
     $("unlock").disabled = true;
     $("msg").textContent = T.decrypting; $("msg").className = "msg";
 
-    var buf = null, usedDecoy = false;
-    try { buf = await decryptBlob(payload, pin, keyfile); }
-    catch (e) {
-      if (payload.decoy) {
-        try { buf = await decryptBlob(payload.decoy, pin, keyfile); usedDecoy = true; }
-        catch (e2) { buf = null; }
+    var buf = null, usedDecoy = false, sigState = null;
+    if (isStream) {
+      try {
+        buf = await streamDecrypt(dataFile, pin, keyfile);
+        sigState = payload.sig ? "ok" : null;
+      } catch (e) {
+        if (String(e && e.message) === "sig") {
+          $("unlock").disabled = false;
+          $("msg").textContent = T.verifyBad; $("msg").className = "msg err";
+          return;
+        }
+        buf = null;
+      }
+    } else {
+      sigState = await verifySig();
+      if (sigState === "bad") {
+        $("msg").textContent = T.verifyBad; $("msg").className = "msg err";
+        return;
+      }
+      try { buf = await decryptBlob(payload, pin, keyfile); }
+      catch (e) {
+        if (payload.decoy) {
+          try { buf = await decryptBlob(payload.decoy, pin, keyfile); usedDecoy = true; }
+          catch (e2) { buf = null; }
+        }
       }
     }
     if (buf === null) {
@@ -343,6 +433,7 @@
   $("pin").addEventListener("keydown", function (e) { if (e.key === "Enter") attempt(); });
 
   if (payload.keyfile) $("kfRow").classList.remove("hidden");
+  if (payload.container === "stream") $("dataRow").classList.remove("hidden");
   var meta = [];
   if (payload.maxviews) meta.push(payload.maxviews === 1 ? T.onetime : ("Views: " + payload.maxviews));
   if (payload.expires) meta.push("Expires " + payload.expires);

@@ -27,7 +27,15 @@ This document specifies format **v2** (LockHTML ≥ 1.1). v1 files remain readab
   "watermark": "For A. Sharma" | null,
   "keyfile":   true | false,        // a keyfile is required in addition to the PIN
   "sig":       { "alg": "Ed25519", "pub": "<base64>", "val": "<base64>" } | null,
-  "decoy":     { "kdf": ..., "kdfparams": ..., "salt": ..., "iv": ..., "ct": ... } | null
+  "decoy":     { "kdf": ..., "kdfparams": ..., "salt": ..., "iv": ..., "ct": ... } | null,
+
+  // streaming container only (see below); absent or "embedded" otherwise
+  "container": "stream",
+  "data":      "report.locked.bin",  // sidecar filename
+  "baseiv":    "<base64>",           // 8 random bytes
+  "chunkSize": 1048576,
+  "chunkCount": 12,
+  "metamac":   "<base64>"            // HMAC-SHA256 over mac_input
 }
 ```
 
@@ -96,8 +104,58 @@ Version 1 payloads used `"kdf": "PBKDF2-SHA256"` with a top-level `"iter"` and n
 Readers must treat a missing `kdfparams` as `{ "iter": payload.iter }`. v1 had no keyfile, signing,
 limits, watermark or decoy.
 
+## Streaming container
+
+For large files the ciphertext is not embedded. Instead it goes into a sidecar file named by
+`data`, and the payload carries `container: "stream"` plus the chunking parameters. The sidecar is:
+
+```
+"LKHS1" (5 bytes) || chunk_0 || chunk_1 || ... || chunk_{n-1}
+```
+
+Each chunk is `AES-256-GCM(plaintext, nonce, aad) = ciphertext || 16-byte tag`, where for chunk `i`:
+
+```
+nonce = base_iv (8 bytes, base64-decoded from "baseiv") || uint32_be(i)
+aad   = uint32_be(i)
+```
+
+Every chunk but the last has `chunkSize` plaintext bytes; the last holds the remainder. There is no
+base64, so the sidecar is about 16 bytes per chunk larger than the original file.
+
+### Whole-file integrity
+
+A MAC binds the metadata and every chunk tag together, so chunks cannot be reordered, duplicated,
+truncated or extended, and the metadata cannot be tampered with:
+
+```
+meta_string = join("|", [
+    "v2", kdf, kdfparams_str, chunkSize, chunkCount, kind, name or "",
+    salt, baseiv, maxviews or "", notbefore or "", expires or ""
+])
+
+mac_input = utf8(meta_string) || tag_0 || tag_1 || ... || tag_{n-1}
+metamac   = HMAC-SHA256(key, mac_input)
+signature = Ed25519(mac_input)          # optional, when signed
+```
+
+where `kdfparams_str` is `"m,t,p"` for Argon2id and `"iter"` for PBKDF2. The reader must recompute
+`mac_input` exactly and compare `metamac` in constant time before returning any plaintext.
+
+### Reader behaviour
+
+1. Read and check the 5-byte magic.
+2. For each chunk index, read exactly `chunkSize + 16` bytes (all remaining bytes for the last),
+   decrypt with the derived nonce and AAD, and keep only the 16-byte tag.
+3. Reject trailing bytes after the last chunk.
+4. Verify `metamac`, then the signature if present.
+
+The sidecar is read lazily (in the browser via `File.slice`), so reading and decryption are
+`O(chunkSize)`; see [DESIGN.md](DESIGN.md) for the memory discussion.
+
 ## Compatibility contract
 
 The Python core (`lockhtml/core.py`) and the JavaScript implementations (the viewer and the GUI)
 must produce and consume byte-identical payloads. This is enforced in CI by locking a file with the
-JavaScript code path and decrypting it with the Python CLI, and vice versa.
+JavaScript code path and decrypting it with the Python CLI, and vice versa, and by a headless-browser
+end-to-end test covering both containers (`tools/e2e_browser.mjs`).

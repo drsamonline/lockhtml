@@ -1,4 +1,4 @@
-.PHONY: help install test build minify lock-example dist clean
+.PHONY: help install test build minify e2e e2e-gui lock-example dist clean
 
 help:
 	@echo "LockHTML - available targets:"
@@ -6,6 +6,8 @@ help:
 	@echo "  make test          Run the test suite"
 	@echo "  make build         Regenerate + minify the GUI and viewer templates"
 	@echo "  make minify        Minify generated assets only"
+	@echo "  make e2e           End-to-end browser test (needs Chrome)"
+	@echo "  make e2e-gui       GUI code path -> Python verification"
 	@echo "  make lock-example  Rebuild examples/sample.locked.html"
 	@echo "  make dist          Build wheel and sdist"
 	@echo "  make clean         Remove build artefacts"
@@ -23,6 +25,14 @@ build:
 
 minify:
 	node tools/minify.mjs
+
+e2e:
+	python tools/e2e_fixtures.py /tmp/lockhtml-e2e
+	node tools/e2e_browser.mjs /tmp/lockhtml-e2e
+
+e2e-gui:
+	node tools/e2e_gui.mjs /tmp/lockhtml-gui
+	python tools/e2e_gui_verify.py /tmp/lockhtml-gui
 
 lock-example:
 	lockhtml lock examples/sample.html --pin 4821 --kdf pbkdf2 -o examples/sample.locked.html

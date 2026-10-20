@@ -42,6 +42,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 from datetime import datetime, timezone
@@ -327,3 +328,225 @@ def extract_payload(locked_html: str) -> Dict[str, Any]:
 def unlock(locked_html: str, pin: str, keyfile: Optional[bytes] = None) -> bytes:
     """Decrypt a locked HTML document back to its original plaintext bytes."""
     return decrypt(extract_payload(locked_html), pin, keyfile)
+
+
+# --------------------------------------------------------------------------- #
+# Streaming container (for large files)
+# --------------------------------------------------------------------------- #
+#
+# The embedded format holds the whole ciphertext inside the HTML as base64, so
+# memory use is roughly 3-4x the file size and the browser's string limits cap
+# it at a few hundred MB. The streaming container instead writes the ciphertext
+# to a sidecar file, encrypted in fixed-size chunks, so both sides can work at
+# ~O(chunk size) memory.
+#
+# Layout of the sidecar file (<name>.locked.bin):
+#
+#     MAGIC (5 bytes) || chunk_0 || chunk_1 || ... || chunk_{n-1}
+#
+# Each chunk is AES-256-GCM(plaintext, nonce, aad) = ciphertext || 16-byte tag,
+# where, for chunk i:
+#     nonce = base_iv (8 random bytes) || uint32_be(i)
+#     aad   = uint32_be(i)          # binds the chunk's position
+#
+# Whole-file integrity is bound by a MAC over the metadata *and* every chunk tag,
+# which prevents reordering, duplication, truncation and metadata tampering:
+#
+#     mac_input = meta_string || tag_0 || ... || tag_{n-1}
+#     metamac   = HMAC-SHA256(key, mac_input)
+#     signature = Ed25519(mac_input)            # optional
+
+STREAM_MAGIC = b"LKHS1"
+#: Default chunk size for the streaming container (1 MiB).
+DEFAULT_CHUNK_SIZE = 1 << 20
+
+
+def _kdfparams_str(kdfparams: Dict[str, Any]) -> str:
+    if "m" in kdfparams:
+        return f"{kdfparams['m']},{kdfparams.get('t')},{kdfparams.get('p')}"
+    return str(kdfparams.get("iter"))
+
+
+def _meta_string(payload: Dict[str, Any]) -> str:
+    """Deterministic, order-fixed metadata that the integrity MAC covers."""
+    return "|".join([
+        f"v{FORMAT_VERSION}",
+        str(payload.get("kdf")),
+        _kdfparams_str(payload.get("kdfparams") or {}),
+        str(payload.get("chunkSize")),
+        str(payload.get("chunkCount")),
+        str(payload.get("kind")),
+        str(payload.get("name") or ""),
+        str(payload.get("salt")),
+        str(payload.get("baseiv")),
+        "" if payload.get("maxviews") is None else str(payload.get("maxviews")),
+        str(payload.get("notbefore") or ""),
+        str(payload.get("expires") or ""),
+    ])
+
+
+def _chunk_nonce(base_iv: bytes, index: int) -> bytes:
+    return base_iv + index.to_bytes(4, "big")
+
+
+def _chunk_aad(index: int) -> bytes:
+    return index.to_bytes(4, "big")
+
+
+def stream_encrypt_file(
+    src_path: str,
+    pin: str,
+    data_path: str,
+    *,
+    kdf: str = DEFAULT_KDF,
+    kdfparams: Optional[Dict[str, Any]] = None,
+    keyfile: Optional[bytes] = None,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    one_time: bool = False,
+    max_views: Optional[int] = None,
+    not_before: Optional[Union[str, datetime]] = None,
+    expires: Optional[Union[str, datetime]] = None,
+    watermark: Optional[str] = None,
+    kind: str = "file",
+    name: Optional[str] = None,
+    sign_key: Optional[Ed25519PrivateKey] = None,
+) -> Dict[str, Any]:
+    """Encrypt a file into a streaming sidecar; returns the payload for the viewer."""
+    if kdfparams is None:
+        kdfparams = ARGON2_PARAMS if kdf == "argon2id" else PBKDF2_PARAMS
+    if one_time and max_views is None:
+        max_views = 1
+
+    salt = os.urandom(16)
+    base_iv = os.urandom(8)
+    key = derive_key(pin, salt, kdf, kdfparams, keyfile)
+    aes = AESGCM(key)
+
+    total = os.path.getsize(src_path)
+    chunk_count = max(1, math.ceil(total / chunk_size))
+
+    payload: Dict[str, Any] = {
+        "v": FORMAT_VERSION,
+        "container": "stream",
+        "kind": kind,
+        "name": name,
+        "kdf": kdf,
+        "kdfparams": dict(kdfparams),
+        "salt": _b64(salt),
+        "baseiv": _b64(base_iv),
+        "chunkSize": chunk_size,
+        "chunkCount": chunk_count,
+        "data": os.path.basename(data_path),
+        "onetime": bool(one_time or max_views == 1),
+        "maxviews": max_views,
+        "notbefore": _iso(not_before),
+        "expires": _iso(expires),
+        "watermark": watermark,
+        "keyfile": bool(keyfile),
+        "sig": None,
+        "decoy": None,
+        "metamac": None,
+        "id": None,
+    }
+
+    meta = _meta_string(payload).encode("utf-8")
+    tags = bytearray()
+
+    with open(src_path, "rb") as fi, open(data_path, "wb") as fo:
+        fo.write(STREAM_MAGIC)
+        index = 0
+        while True:
+            chunk = fi.read(chunk_size)
+            if not chunk and index > 0:
+                break
+            ct = aes.encrypt(_chunk_nonce(base_iv, index), chunk, _chunk_aad(index))
+            fo.write(ct)
+            tags += ct[-16:]
+            index += 1
+            if not chunk:
+                break
+
+    mac_input = bytes(meta + tags)
+    payload["metamac"] = _b64(hmac.new(key, mac_input, hashlib.sha256).digest())
+    payload["id"] = hashlib.sha256(mac_input).hexdigest()[:16]
+    if sign_key is not None:
+        payload["sig"] = {
+            "alg": "Ed25519",
+            "pub": _b64(public_key_bytes(sign_key)),
+            "val": _b64(sign_key.sign(mac_input)),
+        }
+    return payload
+
+
+def stream_decrypt_file(
+    data_path: str,
+    payload: Dict[str, Any],
+    pin: str,
+    out_path: Optional[str] = None,
+    keyfile: Optional[bytes] = None,
+) -> Optional[bytes]:
+    """Verify and decrypt a streaming sidecar. Returns bytes if out_path is None."""
+    key = derive_key(pin, _unb64(payload["salt"]), payload["kdf"],
+                     payload.get("kdfparams"), keyfile)
+    aes = AESGCM(key)
+    base_iv = _unb64(payload["baseiv"])
+    chunk_size = int(payload["chunkSize"])
+    chunk_count = int(payload["chunkCount"])
+    meta = _meta_string(payload).encode("utf-8")
+
+    tags = bytearray()
+    collected = None if out_path else bytearray()
+    sink = open(out_path, "wb") if out_path else None
+    try:
+        with open(data_path, "rb") as fi:
+            if fi.read(len(STREAM_MAGIC)) != STREAM_MAGIC:
+                raise ValueError("not a LockHTML stream container")
+            for index in range(chunk_count):
+                is_last = index == chunk_count - 1
+                ct = fi.read() if is_last else fi.read(chunk_size + 16)
+                if not ct:
+                    raise ValueError("truncated stream container")
+                plain = aes.decrypt(_chunk_nonce(base_iv, index), ct, _chunk_aad(index))
+                tags += ct[-16:]
+                if sink:
+                    sink.write(plain)
+                else:
+                    collected += plain
+            if fi.read(1):
+                raise ValueError("stream container has trailing data")
+    finally:
+        if sink:
+            sink.close()
+
+    mac_input = bytes(meta + tags)
+    expected = hmac.new(key, mac_input, hashlib.sha256).digest()
+    if not hmac.compare_digest(expected, _unb64(payload["metamac"])):
+        raise ValueError("integrity check failed")
+
+    sig = payload.get("sig")
+    if sig:
+        pub = Ed25519PublicKey.from_public_bytes(_unb64(sig["pub"]))
+        pub.verify(_unb64(sig["val"]), mac_input)
+
+    return None if out_path else bytes(collected)
+
+
+def render_viewer(payload: Dict[str, Any], template: Optional[str] = None) -> str:
+    """Wrap an already-built payload in the viewer page (no encryption)."""
+    tpl = template if template is not None else load_template(payload["kdf"])
+    if PAYLOAD_PLACEHOLDER not in tpl:
+        raise ValueError("viewer template is missing the __PAYLOAD__ placeholder")
+    return tpl.replace(PAYLOAD_PLACEHOLDER, json.dumps(payload, separators=(",", ":")))
+
+
+def stream_encrypt_bytes(data: Source, pin: str, **kwargs: Any):
+    """Convenience wrapper: returns ``(payload, sidecar_bytes)`` for small inputs."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        src = os.path.join(tmp, "src.bin")
+        dst = os.path.join(tmp, "data.bin")
+        with open(src, "wb") as fh:
+            fh.write(_as_bytes(data))
+        payload = stream_encrypt_file(src, pin, dst, **kwargs)
+        with open(dst, "rb") as fh:
+            return payload, fh.read()

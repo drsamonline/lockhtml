@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lockhtml"
-version = "1.1.0"
+version = "1.2.0"
 description = "PIN-protect and one-time-view any HTML file with AES-256-GCM. Cross-platform CLI plus a browser-based GUI."
 readme = "README.md"
 requires-python = ">=3.9"

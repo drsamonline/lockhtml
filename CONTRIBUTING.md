@@ -19,6 +19,18 @@ npm install        # build tooling: minifier + Argon2 WASM
 make test        # or: python -m pytest
 ```
 
+### End-to-end browser tests
+
+These open files locked by the CLI in a real headless Chrome and check every behaviour, for both
+containers. They need a Chrome/Chromium binary.
+
+```bash
+make e2e         # fixtures + browser test (embedded + streaming)
+make e2e-gui     # GUI code path -> verified by the Python core
+```
+
+Set `CHROME=/path/to/chrome` if puppeteer-core cannot find one.
+
 ## Regenerating the generated assets
 
 Three files are generated and must not be hand-edited:

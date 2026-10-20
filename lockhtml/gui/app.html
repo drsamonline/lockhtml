@@ -146,6 +146,7 @@
     <div class="opts">
       <label><input type="checkbox" id="oneTime"> <span data-i18n="oneTime">One-time view</span></label>
       <label><input type="checkbox" id="useKeyfile"> <span data-i18n="useKeyfile">Require a keyfile</span></label>
+      <label><input type="checkbox" id="streamMode"> <span data-i18n="streamMode">Streaming bundle (large files)</span></label>
     </div>
 
     <details class="adv">
@@ -208,6 +209,10 @@
     <div class="kfrow" id="kfUnlockRow" style="display:none">
       <span class="state" style="color:var(--warn)" data-i18n="keyfileNeeded">This file needs its keyfile:</span>
       <input type="file" id="keyfileUnlock">
+    </div>
+    <div class="kfrow" id="dataUnlockRow" style="display:none">
+      <span class="state" style="color:var(--warn)" data-i18n="dataNeeded">This file needs its data file (.bin):</span>
+      <input type="file" id="dataUnlock">
     </div>
 
     <div class="actions">
@@ -367,6 +372,87 @@ function extractPayload(html) {
   return JSON.parse(m[1]);
 }
 
+/* ---------- streaming container (large files) ---------- */
+const STREAM_CHUNK = 1 << 20;
+const STREAM_MAGIC_BYTES = new Uint8Array([0x4c, 0x4b, 0x48, 0x53, 0x31]); // "LKHS1"
+
+function metaString(p) {
+  const kp = p.kdfparams || {};
+  const kps = ("m" in kp) ? (kp.m + "," + kp.t + "," + kp.p) : String(kp.iter);
+  return ["v2", p.kdf, kps, String(p.chunkSize), String(p.chunkCount), String(p.kind),
+          (p.name || ""), String(p.salt), String(p.baseiv),
+          (p.maxviews == null ? "" : String(p.maxviews)),
+          (p.notbefore || ""), (p.expires || "")].join("|");
+}
+function equalBytes(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+async function streamEncrypt(bytes, opts) {
+  const kdfparams = opts.kdf === "argon2id" ? { ...ARGON2_PARAMS } : { iter: PBKDF2_ITER };
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const baseIv = crypto.getRandomValues(new Uint8Array(8));
+  const raw = await rawKey(opts.pin, salt, opts.kdf, kdfparams, opts.keyfile);
+  const aesKey = await crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt"]);
+  const cs = opts.chunkSize, n = Math.max(1, Math.ceil(bytes.length / cs));
+  const payload = {
+    v: 2, container: "stream", kind: opts.kind, name: opts.name || null, kdf: opts.kdf, kdfparams,
+    salt: bytesToB64(salt), baseiv: bytesToB64(baseIv), chunkSize: cs, chunkCount: n,
+    data: opts.dataName, onetime: !!(opts.oneTime || opts.maxViews === 1), maxviews: opts.maxViews || null,
+    notbefore: opts.notBefore || null, expires: opts.expires || null, watermark: opts.watermark || null,
+    keyfile: !!opts.keyfile, sig: null, decoy: null, metamac: null, id: null
+  };
+  const meta = enc.encode(metaString(payload));
+  const parts = [STREAM_MAGIC_BYTES], tags = [];
+  for (let i = 0; i < n; i++) {
+    const chunk = bytes.subarray(i * cs, Math.min((i + 1) * cs, bytes.length));
+    const nonce = new Uint8Array(12); nonce.set(baseIv, 0); new DataView(nonce.buffer).setUint32(8, i, false);
+    const aad = new Uint8Array(4); new DataView(aad.buffer).setUint32(0, i, false);
+    const ct = new Uint8Array(await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: nonce, additionalData: aad }, aesKey, chunk));
+    parts.push(ct); tags.push(ct.slice(ct.length - 16));
+  }
+  let total = 0; tags.forEach(t => total += t.length);
+  const macInput = new Uint8Array(meta.length + total); macInput.set(meta, 0);
+  let o = meta.length; tags.forEach(t => { macInput.set(t, o); o += t.length; });
+  const hk = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  payload.metamac = bytesToB64(new Uint8Array(await crypto.subtle.sign("HMAC", hk, macInput)));
+  payload.id = hex(new Uint8Array(await crypto.subtle.digest("SHA-256", macInput)).slice(0, 8));
+  return { payload, bin: new Blob(parts) };
+}
+async function streamDecrypt(dataFile, payload, pin, keyfile) {
+  const kdfparams = payload.kdfparams || { iter: PBKDF2_ITER };
+  const raw = await rawKey(pin, b64ToBytes(payload.salt), payload.kdf || "pbkdf2", kdfparams, keyfile);
+  const aesKey = await crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["decrypt"]);
+  const head = new Uint8Array(await dataFile.slice(0, 5).arrayBuffer());
+  if (!equalBytes(head, STREAM_MAGIC_BYTES)) throw new Error("not a LockHTML stream container");
+  const baseIv = b64ToBytes(payload.baseiv), cs = payload.chunkSize, n = payload.chunkCount;
+  let offset = 5; const parts = [], tags = [];
+  for (let i = 0; i < n; i++) {
+    const size = (i === n - 1) ? (dataFile.size - offset) : (cs + 16);
+    const ct = new Uint8Array(await dataFile.slice(offset, offset + size).arrayBuffer());
+    offset += size;
+    const nonce = new Uint8Array(12); nonce.set(baseIv, 0); new DataView(nonce.buffer).setUint32(8, i, false);
+    const aad = new Uint8Array(4); new DataView(aad.buffer).setUint32(0, i, false);
+    parts.push(new Uint8Array(await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: nonce, additionalData: aad }, aesKey, ct)));
+    tags.push(ct.slice(ct.length - 16));
+  }
+  if (offset !== dataFile.size) throw new Error("trailing data");
+  const meta = enc.encode(metaString(payload));
+  let total = 0; tags.forEach(t => total += t.length);
+  const macInput = new Uint8Array(meta.length + total); macInput.set(meta, 0);
+  let o = meta.length; tags.forEach(t => { macInput.set(t, o); o += t.length; });
+  const hk = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", hk, macInput));
+  if (!equalBytes(mac, b64ToBytes(payload.metamac))) throw new Error("integrity check failed");
+  let outLen = 0; parts.forEach(p => outLen += p.length);
+  const out = new Uint8Array(outLen); let pos = 0;
+  parts.forEach(p => { out.set(p, pos); pos += p.length; });
+  return out;
+}
+
 /* ---------- tabs ---------- */
 document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
@@ -457,7 +543,7 @@ $("lockBtn").addEventListener("click", async () => {
   }
   const opts = {
     pin, kdf: $("kdf").value, keyfile: $("useKeyfile").checked ? keyfileBytes : null,
-    oneTime: $("oneTime").checked,
+    oneTime: $("oneTime").checked, stream: $("streamMode").checked,
     maxViews: $("maxViews").value ? parseInt($("maxViews").value, 10) : null,
     notBefore: $("notBefore").value ? new Date($("notBefore").value).toISOString() : null,
     expires: $("expires").value ? new Date($("expires").value).toISOString() : null,
@@ -473,13 +559,24 @@ $("lockBtn").addEventListener("click", async () => {
       const buf = new Uint8Array(await f.arrayBuffer());
       const isHtml = /\.html?$/i.test(f.name);
       const o = { ...opts, kind: isHtml ? "html" : "file", name: isHtml ? null : f.name };
-      const payload = await makePayload(buf, o);
       const tpl = opts.kdf === "argon2id" ? VIEWER_TEMPLATE_ARGON2 : VIEWER_TEMPLATE;
-      const locked = tpl.replace("__PAYLOAD__", JSON.stringify(payload));
       const outName = lockedName(f.name);
-      download(outName, locked);
+      let locked, label;
+      if (opts.stream) {
+        const dataName = outName.replace(/\.html$/, ".bin");
+        const built = await streamEncrypt(buf, { ...o, chunkSize: STREAM_CHUNK, dataName });
+        locked = tpl.replace("__PAYLOAD__", JSON.stringify(built.payload));
+        download(outName, locked);
+        download(dataName, built.bin, "application/octet-stream");
+        label = `${outName} + ${dataName}`;
+      } else {
+        const payload = await makePayload(buf, o);
+        locked = tpl.replace("__PAYLOAD__", JSON.stringify(payload));
+        download(outName, locked);
+        label = outName;
+      }
       const row = document.createElement("div"); row.className = "result";
-      row.innerHTML = `<span class="nm"><span style="color:var(--ok)">\u2714</span> ${outName}</span>`;
+      row.innerHTML = `<span class="nm"><span style="color:var(--ok)">\u2714</span> ${label}</span>`;
       const a = document.createElement("a"); a.className = "dl"; a.textContent = "Download again";
       a.href = URL.createObjectURL(new Blob([locked], { type: "text/html" })); a.download = outName;
       row.appendChild(a); results.appendChild(row);
@@ -519,17 +616,24 @@ $("unlockBtn").addEventListener("click", async () => {
     const html = await unlockFile.text();
     const payload = extractPayload(html);
     if (payload.keyfile) $("kfUnlockRow").style.display = "flex";
+    if (payload.container === "stream") $("dataUnlockRow").style.display = "flex";
     let keyfile = null;
     if (payload.keyfile) {
       const kf = $("keyfileUnlock").files[0];
       if (!kf) { $("statusUnlock").className = "status err"; $("statusUnlock").textContent = "This file needs its keyfile."; return; }
       keyfile = new Uint8Array(await kf.arrayBuffer());
     }
-    const kdf = payload.kdf || "PBKDF2-SHA256";
-    const kdfparams = payload.kdfparams || (payload.iter ? { iter: payload.iter } : { iter: PBKDF2_ITER });
-    const key = await deriveAesKey(pin, b64ToBytes(payload.salt), kdf, kdfparams, keyfile, ["decrypt"]);
-    const buf = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64ToBytes(payload.iv) }, key, b64ToBytes(payload.ct));
-    unlockBuf = new Uint8Array(buf);
+    if (payload.container === "stream") {
+      const df = $("dataUnlock").files[0];
+      if (!df) { $("statusUnlock").className = "status err"; $("statusUnlock").textContent = "This file needs its data file (.bin)."; return; }
+      unlockBuf = await streamDecrypt(df, payload, pin, keyfile);
+    } else {
+      const kdf = payload.kdf || "PBKDF2-SHA256";
+      const kdfparams = payload.kdfparams || (payload.iter ? { iter: payload.iter } : { iter: PBKDF2_ITER });
+      const key = await deriveAesKey(pin, b64ToBytes(payload.salt), kdf, kdfparams, keyfile, ["decrypt"]);
+      const buf = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64ToBytes(payload.iv) }, key, b64ToBytes(payload.ct));
+      unlockBuf = new Uint8Array(buf);
+    }
     $("statusUnlock").className = "status ok";
     $("statusUnlock").textContent = "Unlocked." + (payload.onetime ? " (one-time)" : "");
     if ((payload.kind || "html") === "file") {

@@ -17,12 +17,16 @@ from lockhtml.core import (
     ARGON2_PARAMS,
     FORMAT_VERSION,
     PBKDF2_PARAMS,
+    STREAM_MAGIC,
     build_locked_html,
     decrypt,
     encrypt,
     extract_payload,
     generate_signing_key,
     public_key_bytes,
+    render_viewer,
+    stream_decrypt_file,
+    stream_encrypt_bytes,
     try_decoy,
     unlock,
     verify_signature,
@@ -182,7 +186,7 @@ def test_extract_payload_invalid():
 
 
 def test_version():
-    assert __version__ == "1.1.0"
+    assert __version__ == "1.2.0"
 
 
 # --- CLI -------------------------------------------------------------------
@@ -260,3 +264,116 @@ def test_cli_binary_file_kind(tmp_path):
     payload = extract_payload(out.read_text(encoding="utf-8"))
     assert payload["kind"] == "file" and payload["name"] == "data.bin"
     assert unlock(out.read_text(encoding="utf-8"), "1") == b"\x00\xff\x10binary"
+
+
+# --- streaming container ---------------------------------------------------
+
+def _sidecar(tmp_path, payload, sidecar):
+    p = tmp_path / "data.bin"
+    p.write_bytes(sidecar)
+    return p
+
+
+@pytest.mark.parametrize("kdf", ["pbkdf2", "argon2id"])
+def test_stream_round_trip(tmp_path, kdf):
+    data = os.urandom(200_000)
+    payload, sidecar = stream_encrypt_bytes(data, "pin", kdf=kdf, chunk_size=65536)
+    assert payload["container"] == "stream"
+    assert payload["chunkCount"] == 4
+    assert sidecar[:5] == STREAM_MAGIC
+    # sidecar is raw ciphertext: ~= plaintext + 16 bytes/tag, no base64 inflation
+    assert len(sidecar) == len(data) + 5 + 16 * payload["chunkCount"]
+    assert stream_decrypt_file(str(_sidecar(tmp_path, payload, sidecar)), payload, "pin") == data
+
+
+def test_stream_many_chunks(tmp_path):
+    data = os.urandom(5 * (1 << 20))
+    payload, sidecar = stream_encrypt_bytes(data, "p", kdf="pbkdf2", chunk_size=65536)
+    assert payload["chunkCount"] == 80
+    assert stream_decrypt_file(str(_sidecar(tmp_path, payload, sidecar)), payload, "p") == data
+
+
+def test_stream_wrong_pin(tmp_path):
+    payload, sidecar = stream_encrypt_bytes(os.urandom(1000), "pin", kdf="pbkdf2")
+    with pytest.raises(Exception):
+        stream_decrypt_file(str(_sidecar(tmp_path, payload, sidecar)), payload, "nope")
+
+
+def test_stream_tampered_chunk_fails(tmp_path):
+    payload, sidecar = stream_encrypt_bytes(os.urandom(200_000), "pin", kdf="pbkdf2", chunk_size=65536)
+    bad = bytearray(sidecar)
+    bad[10] ^= 0x01                      # flip a byte inside the first chunk
+    with pytest.raises(Exception):
+        stream_decrypt_file(str(_sidecar(tmp_path, payload, bytes(bad))), payload, "pin")
+
+
+def test_stream_truncated_fails(tmp_path):
+    payload, sidecar = stream_encrypt_bytes(os.urandom(200_000), "pin", kdf="pbkdf2", chunk_size=65536)
+    with pytest.raises(Exception):
+        stream_decrypt_file(str(_sidecar(tmp_path, payload, sidecar[:-20])), payload, "pin")
+
+
+def test_stream_trailing_data_fails(tmp_path):
+    payload, sidecar = stream_encrypt_bytes(os.urandom(1000), "pin", kdf="pbkdf2")
+    with pytest.raises(Exception):
+        stream_decrypt_file(str(_sidecar(tmp_path, payload, sidecar + b"junk")), payload, "pin")
+
+
+def test_stream_metadata_tamper_fails(tmp_path):
+    payload, sidecar = stream_encrypt_bytes(os.urandom(1000), "pin", kdf="pbkdf2")
+    payload["chunkCount"] = 99            # attacker claims more chunks
+    with pytest.raises(Exception):
+        stream_decrypt_file(str(_sidecar(tmp_path, payload, sidecar)), payload, "pin")
+
+
+def test_stream_keyfile(tmp_path):
+    kf = b"stream-keyfile"
+    payload, sidecar = stream_encrypt_bytes(os.urandom(1000), "pin", kdf="pbkdf2", keyfile=kf)
+    p = _sidecar(tmp_path, payload, sidecar)
+    assert stream_decrypt_file(str(p), payload, "pin", keyfile=kf)
+    with pytest.raises(Exception):
+        stream_decrypt_file(str(p), payload, "pin")
+
+
+def test_stream_signature(tmp_path):
+    key = generate_signing_key()
+    payload, sidecar = stream_encrypt_bytes(os.urandom(1000), "pin", kdf="pbkdf2", sign_key=key)
+    assert payload["sig"]["alg"] == "Ed25519"
+    p = _sidecar(tmp_path, payload, sidecar)
+    assert stream_decrypt_file(str(p), payload, "pin")
+    payload["sig"]["val"] = base64.b64encode(os.urandom(64)).decode()
+    with pytest.raises(Exception):
+        stream_decrypt_file(str(p), payload, "pin")
+
+
+def test_stream_out_path(tmp_path):
+    data = os.urandom(150_000)
+    payload, sidecar = stream_encrypt_bytes(data, "pin", kdf="pbkdf2", chunk_size=65536)
+    out = tmp_path / "recovered.bin"
+    assert stream_decrypt_file(str(_sidecar(tmp_path, payload, sidecar)), payload, "pin", str(out)) is None
+    assert out.read_bytes() == data
+
+
+def test_render_viewer_embeds_payload():
+    payload, _ = stream_encrypt_bytes(b"hello", "pin", kdf="pbkdf2")
+    html = render_viewer(payload)
+    assert "__PAYLOAD__" not in html
+    assert extract_payload(html)["container"] == "stream"
+
+
+def test_cli_stream(tmp_path):
+    src = tmp_path / "big.bin"
+    src.write_bytes(os.urandom(150_000))
+    r = run_cli("lock", str(src), "--pin", "1", "--stream", "--chunk-size", "64", cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    locked = tmp_path / "big.locked.html"
+    sidecar = tmp_path / "big.locked.bin"
+    assert locked.is_file() and sidecar.is_file()
+    assert extract_payload(locked.read_text(encoding="utf-8"))["container"] == "stream"
+
+    out = tmp_path / "out.bin"
+    r = run_cli("unlock", str(locked), "--pin", "1", "-o", str(out), cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert out.read_bytes() == src.read_bytes()
+
+    assert run_cli("unlock", str(locked), "--pin", "wrong", "-o", str(out), cwd=tmp_path).returncode == 1

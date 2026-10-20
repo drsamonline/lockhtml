@@ -40,6 +40,7 @@ put on a USB stick — and the GUI works **offline** once loaded.
 - 👁️ **View limits** — one-time, *N* views, a "do not open before" time, and an expiry time.
 - 💧 **Watermarking** — overlay recipient-specific text to trace a leaked copy.
 - 📦 **Any file type** — HTML renders inline; everything else is offered as a download.
+- 🗂️ **Two containers** — a single self-contained file for documents, or a chunked **streaming bundle** for very large files (video, disk images) at constant memory. See [docs/DESIGN.md](docs/DESIGN.md).
 - 🌐 **Browser GUI** — a single self-contained HTML file, installable as a PWA, fully offline.
 - 🖥️ **Cross-platform CLI** — one command on Windows, Linux and macOS.
 - 🔁 **Reversible** — `lockhtml unlock` recovers the original with the PIN.
@@ -78,6 +79,9 @@ lockhtml lock report.html --pin 4821 --sign sign.pem
 
 # Add a duress PIN that opens a decoy page
 lockhtml lock report.html --pin 4821 --decoy-pin 0000
+
+# Large file: streaming container (viewer + sidecar .bin, constant memory)
+lockhtml lock holiday.mp4 --pin 4821 --stream
 
 # Recover the original
 lockhtml unlock report.locked.html --pin 4821 -o report.html
@@ -134,6 +138,27 @@ The full format is documented in [`docs/FORMAT.md`](docs/FORMAT.md). The CLI (Py
 (JavaScript) implement the same format, so files lock and unlock interchangeably across both —
 enforced by CI on every push.
 
+### 📦 Containers and size limits
+
+The default **embedded** container puts the ciphertext inside the HTML as base64. That is the most
+convenient form — one file the recipient can just open — but memory use is roughly **3–4× the file
+size**, so it is comfortable to about 50 MB and breaks somewhere around 250–300 MB (the browser's
+single-string limit is ~512 MB, and base64 inflates by 33%).
+
+For bigger files use `--stream`, which writes the ciphertext to a sidecar `.bin` in fixed-size
+chunks. Reading and decryption then cost **~O(chunk size)** instead of O(file size), so
+multi-gigabyte files work. The trade-off is that the recipient receives **two files**.
+
+| | Embedded (default) | Streaming (`--stream`) |
+| --- | --- | --- |
+| Files the recipient gets | 1 | 2 (`.html` + `.bin`) |
+| Practical size ceiling | ~250–300 MB | Limited by disk |
+| Memory to encrypt/decrypt | ~3.7× file size | ~O(chunk size) |
+| Size overhead | ≈33% (base64) | ≈16 bytes per chunk |
+
+Neither mode touches the network — "streaming" here means *memory*, not the internet. Full
+reasoning, the memory arithmetic and the chunk format are in **[docs/DESIGN.md](docs/DESIGN.md)**.
+
 ## 🛡️ Security model — read this
 
 **The PIN (and keyfile) gives you real encryption.** Without them the file is unreadable even if
@@ -181,8 +206,12 @@ lockhtml/
 ├── tools/
 │   ├── build.py                # builds the viewer variants + GUI
 │   ├── minify.mjs              # minifies the generated assets
-│   └── check_gui_compat.mjs    # cross-implementation check (run in CI)
-├── docs/                       # format spec + audit
+│   ├── check_gui_compat.mjs    # cross-implementation check (run in CI)
+│   ├── e2e_fixtures.py         # builds fixtures for the browser test
+│   ├── e2e_browser.mjs         # end-to-end browser test (embedded + streaming)
+│   ├── e2e_gui.mjs             # locks files with the GUI code path
+│   └── e2e_gui_verify.py       # verifies those with the Python core
+├── docs/                       # design notes, format spec, audit
 ├── tests/                      # crypto + CLI tests
 ├── examples/                   # sample.html and its locked twin
 └── .github/workflows/          # CI + GitHub Pages deploy

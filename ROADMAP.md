@@ -19,6 +19,14 @@ Legend: ✅ shipped · 🔜 planned · 💭 under consideration
 - ✅ Payload format v2 with a written spec
 - ✅ Build-time minification with verification
 
+## Shipped in v1.2
+
+- ✅ **Streaming container** for very large files (chunked AES-GCM, O(chunk) memory)
+- ✅ Whole-file integrity MAC binding chunk order, count, size and metadata
+- ✅ GUI create/open for streaming bundles
+- ✅ `docs/DESIGN.md` design notes on size limits and containers
+- ✅ Headless-browser end-to-end tests committed to the repo
+
 ## Planned
 
 ### 🔜 Cryptography
@@ -30,7 +38,9 @@ Legend: ✅ shipped · 🔜 planned · 💭 under consideration
 - **Hidden volume** — a decoy and a real payload in one file with plausible deniability.
 
 ### 🔜 Usability
-- **Streaming / chunked encryption** for very large files without exhausting memory.
+- **Constant-memory output** in the browser via the File System Access API (streaming save),
+  so decryption no longer assembles the whole result in a Blob.
+- **Decoy PIN support in the streaming container** (currently embedded-only).
 - **Folder drop** — lock an entire multi-file site into one bundle.
 - **More languages** for the viewer and the GUI.
 - **QR code for the PIN** generated offline.

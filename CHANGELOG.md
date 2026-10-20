@@ -4,6 +4,29 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-10-20
+
+### Added
+- **Streaming container** (`--stream`) for large files: the ciphertext is written to a sidecar
+  `.bin` in fixed-size chunks, so reading and decryption cost ~O(chunk size) instead of O(file
+  size). Supports multi-gigabyte files; the recipient gets two files.
+- `--chunk-size` (KiB) to tune the chunk size.
+- `unlock --data` to point at the sidecar when opening a streaming bundle.
+- Per-chunk nonces derived from a base IV plus the chunk index, with the index bound as
+  Additional Authenticated Data (the STREAM construction), plus a whole-file HMAC over the
+  metadata and every chunk tag.
+- GUI support for creating and opening streaming bundles.
+- `docs/DESIGN.md` — design notes explaining the size limits and the two containers.
+- Headless-browser end-to-end tests in the repo (`tools/e2e_browser.mjs`,
+  `tools/e2e_gui.mjs`), covering both containers.
+
+### Changed
+- `docs/FORMAT.md` now specifies the streaming container.
+
+### Security
+- The streaming MAC binds chunk order, count, size, KDF parameters and limits, so truncation,
+  reordering and metadata tampering are all detected.
+
 ## [1.1.0] - 2026-10-20
 
 ### Added

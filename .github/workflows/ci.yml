@@ -59,3 +59,34 @@ jobs:
         run: |
           lockhtml unlock /tmp/gui_locked.html --pin 4821 | grep -q "ORION-7742"
           echo "cross-implementation compatibility: OK"
+
+  browser:
+    name: end-to-end in a real browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - uses: browser-actions/setup-chrome@v1
+        id: chrome
+      - name: Install
+        run: |
+          pip install -e .
+          npm ci
+      - name: Embedded + streaming containers in a real browser
+        env:
+          CHROME: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          python tools/e2e_fixtures.py /tmp/lockhtml-e2e
+          node tools/e2e_browser.mjs /tmp/lockhtml-e2e
+      - name: GUI code path, verified by the Python core
+        env:
+          CHROME: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          node tools/e2e_gui.mjs /tmp/lockhtml-gui
+          python tools/e2e_gui_verify.py /tmp/lockhtml-gui

@@ -4,6 +4,27 @@
 
 **Turn any file into a PIN-protected document — optionally viewable only once.**
 
+AES-256-GCM · PIN-protected · one-time view · cross-platform · offline · nothing leaves your device.
+
+[![Stars](https://img.shields.io/github/stars/drsamonline/lockhtml?style=for-the-badge&logo=github&color=22d3ee&labelColor=0a1024)](https://github.com/drsamonline/lockhtml/stargazers)
+[![License: MIT](https://img.shields.io/badge/license-MIT-22d3ee?style=for-the-badge&labelColor=0a1024)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/drsamonline/lockhtml?style=for-the-badge&color=22d3ee&labelColor=0a1024)](https://github.com/drsamonline/lockhtml/releases)
+[![PyPI](https://img.shields.io/pypi/v/lockhtml?style=for-the-badge&color=22d3ee&labelColor=0a1024)](https://pypi.org/project/lockhtml/)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-22d3ee?style=for-the-badge&labelColor=0a1024)](#)
+[![CLI + GUI](https://img.shields.io/badge/interface-CLI%20%2B%20GUI-22d3ee?style=for-the-badge&labelColor=0a1024)](#)
+
+### 🌐 [Landing page](https://drsamonline.github.io/lockhtml/) &nbsp;•&nbsp; 🚀 [Live demo — open the app](https://drsamonline.github.io/lockhtml/play/)
+
+</div>
+
+---
+
+<div align="center">
+
+# 🔒 LockHTML
+
+**Turn any file into a PIN-protected document — optionally viewable only once.**
+
 AES-256-GCM · Argon2id · unlocks in the browser · runs everywhere · nothing leaves your device.
 
 [![CI](https://github.com/drsamonline/lockhtml/actions/workflows/ci.yml/badge.svg)](https://github.com/drsamonline/lockhtml/actions/workflows/ci.yml)

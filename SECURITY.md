@@ -28,6 +28,10 @@ We aim to acknowledge reports within a few days.
 - **Hidden volume**: additional payloads ("slots") encrypted under their own PINs, each with its own
   salt and IV, exactly like the main payload. `decrypt_any` tries the main payload, then every slot,
   then the decoy.
+- **age interop**: the CLI can read and write age v1 files (X25519 recipients). This is a
+  from-scratch implementation of a published format; it is verified against the reference
+  implementation but has **not** had an independent security review. See
+  [docs/AGE.md](docs/AGE.md).
 - **Signing**: optional Ed25519 over the ciphertext (embedded) or over the MAC input (streaming);
   verified in-browser before display.
 - **Streaming container**: AES-256-GCM per 1 MiB chunk, nonce = `base_iv || uint32_be(index)`,

@@ -4,6 +4,24 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-10-21
+
+### Added
+- **`age` interoperability** — read and write standard [age](https://age-encryption.org/v1) files, so
+  LockHTML and the `age` tool can exchange files. Supports the v1 header and its MAC, `X25519`
+  recipients and identities, the 64 KiB STREAM payload, and multiple recipients per file.
+- `keygen --type age` writes an age-format identity file (compatible with `age -i`).
+- `age-encrypt` / `age-decrypt` CLI commands, with repeatable `-r`/`-i` and a `-R recipients.txt` file.
+- `docs/AGE.md` documents what is and is not supported, and how it was verified.
+
+### Notes
+- age is **CLI-only**: it uses ChaCha20-Poly1305, which Web Crypto does not expose, so the HTML viewer
+  and the GUI cannot open age files.
+- `scrypt` passphrases, the ML-KEM hybrid and P-256 tagged recipient types, and ASCII armor are not
+  implemented. Unknown stanzas are skipped on decrypt, as the spec requires.
+- **This implementation has not had an independent security review.** It is verified against the
+  reference implementation, but for anything that matters prefer the reference `age` tool.
+
 ## [2.0.1] - 2026-10-20
 
 A post-release audit pass. Every item below is a fix found by *running* things rather than reading
@@ -172,6 +190,7 @@ them — see `docs/AUDIT.md` for the detail.
 - Cross-platform CLI and a single-file browser GUI.
 - GitHub Actions CI (Linux/Windows/macOS, Python 3.9–3.12) and GitHub Pages deployment.
 
+[2.1.0]: https://github.com/drsamonline/lockhtml/releases/tag/v2.1.0
 [2.0.1]: https://github.com/drsamonline/lockhtml/releases/tag/v2.0.1
 [2.0.0]: https://github.com/drsamonline/lockhtml/releases/tag/v2.0.0
 [1.4.0]: https://github.com/drsamonline/lockhtml/releases/tag/v1.4.0

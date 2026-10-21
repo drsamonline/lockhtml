@@ -91,6 +91,27 @@ revoked — the file must be re-locked with a fresh split if shares are exposed.
 **Known limitation.** Hidden slots are *visible* in the file's JSON; they are unreadable without their
 PIN but their presence is not concealed.
 
+## age interop review (v2.1)
+
+age interop was checked against the **reference implementation**, not against a reading of the spec.
+
+| Risk | Mitigation | Test |
+| --- | --- | --- |
+| Misreading the spec | The official `example.age` vector from FiloSottile/age is embedded and decrypted in CI | `test_official_age_vector_decrypts` |
+| STREAM chunk boundary | Bidirectional interop with the `age` binary across 64 KiB±1, exact multiples and empty input | `test_age_round_trip_sizes` |
+| A tampered header | The header MAC is verified before the payload is touched | `test_official_age_header_mac_is_verified` |
+| Low-order X25519 share | Refused rather than proceeding | spec-mandated check in `_unwrap_file_key` |
+| Partitioning oracle | Stanza bodies are length-checked before decryption | `_unwrap_file_key` |
+| Unknown stanza types | Skipped, as the spec requires | `test_age_skips_unknown_stanzas` |
+
+**Found during this review:** a payload whose length is an **exact multiple of 64 KiB** decrypted
+incorrectly — the final chunk is full-sized, so a naive reader treats it as non-final and the tag
+check fails. Only the reference binary surfaced it; the spec wording does not make the case obvious.
+Fixed, and covered by `test_age_round_trip_sizes[65536]` and `[131072]`.
+
+**Known limitation.** This implementation has not had an independent security review. For anything
+that matters, prefer the reference `age` tool.
+
 ## Findings
 
 ### Fixed during this cycle
@@ -110,6 +131,7 @@ PIN but their presence is not concealed.
 | 11 | `lockhtml.bat` used `%PY%` unquoted, breaking on Python paths containing spaces. | Medium | Quoted at every use site. |
 | 12 | `unlock()`/`decrypt()` on a streaming payload raised a bare `KeyError` instead of explaining that the sidecar is needed. | Low | Explicit `ValueError`; covered by `test_unlock_rejects_stream_payload`. |
 | 13 | `make minify` minified without rebuilding first. Minify is not idempotent, so this could leave an asset that CI rejects. | Medium | `make minify` is now an alias for `make build`; `build + minify` is verified deterministic. |
+| 14 | age STREAM decryption mishandled a payload whose length is an exact multiple of 64 KiB (the final full chunk was treated as non-final). | High | Found by bidirectional interop with the reference `age` binary, not by reading the spec. Fixed and covered by `test_age_round_trip_sizes`. |
 
 ### Reviewed and judged acceptable
 

@@ -38,6 +38,7 @@ put on a USB stick — and the GUI works **offline** once loaded.
 - 🕳️ **Hidden volume** — a second PIN that opens entirely different content, so the file has a plausible cover story.
 - 🎛️ **Auto-calibrated KDF** — `--auto-kdf` times this machine and picks the strongest Argon2id cost that still unlocks quickly.
 - 🐢 **Constant-memory save** — for large streaming files, decrypt straight to disk chunk-by-chunk (Chromium), instead of building the whole file in memory.
+- 🔄 **age interop** — read and write ordinary [age](https://age-encryption.org/v1) files (X25519 recipients), so you can open a file the `age` tool encrypted and vice versa.
 - 🧩 **Shamir secret sharing** — split the key into *n* shares so any *k* holders (and no fewer) can open it. Give five people a share; any three can open it.
 - 🧂 **Keyfile support** — optionally require a second file in addition to the PIN.
 - ✍️ **Ed25519 signing** — sign a locked file so recipients can verify it came from you and wasn't altered.
@@ -100,6 +101,11 @@ lockhtml unlock cover.locked.html --pin 0000     # opens the hidden content
 
 # Lock a whole folder
 lockhtml lock ./contracts --recursive --pin 4821 --outdir ./locked
+
+# Read and write standard age files (interoperates with the `age` tool)
+lockhtml keygen --type age -o key.txt
+lockhtml age-encrypt report.pdf -r age1abc…
+lockhtml age-decrypt report.pdf.age -i key.txt -o report.pdf
 
 # Large file: streaming container (viewer + sidecar .bin, constant memory)
 lockhtml lock holiday.mp4 --pin 4821 --stream
@@ -171,6 +177,23 @@ a PIN (and a keyfile) on top for two factors. It works in the streaming containe
 lockhtml keygen --type x25519 -o alice.pem   # private (keep) + alice.pub (hand out)
 lockhtml lock big.mp4 --to alice.pub --stream
 ```
+
+### 🔄 age interop
+
+LockHTML reads and writes standard [age](https://age-encryption.org/v1) files, so it interoperates
+with the `age` tool. Supported: the v1 header and its MAC, `X25519` recipients and identities, the
+64 KiB STREAM payload, and multiple recipients per file. Not supported: `scrypt` passphrases, the
+ML-KEM hybrid and P-256 tagged recipients, and ASCII armor.
+
+```bash
+lockhtml keygen --type age -o key.txt        # an age identity; prints the recipient
+lockhtml age-encrypt report.pdf -r age1abc…  # -> report.pdf.age
+lockhtml age-decrypt report.pdf.age -i key.txt -o report.pdf
+```
+
+age uses ChaCha20-Poly1305, which Web Crypto does not expose, so this is **CLI-only** — the HTML
+viewer and GUI cannot open age files. Interoperability is verified against the reference
+implementation in both directions; see [docs/AGE.md](docs/AGE.md).
 
 ### 🧩 Shamir secret sharing
 

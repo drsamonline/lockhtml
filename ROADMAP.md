@@ -19,6 +19,12 @@ Legend: ✅ shipped · 🔜 planned · 💭 under consideration
 - ✅ Payload format v2 with a written spec
 - ✅ Build-time minification with verification
 
+## Shipped in v2.1
+
+- ✅ **`age` interoperability** — read and write age v1 files with X25519 recipients
+- ✅ `keygen --type age`, `age-encrypt`, `age-decrypt`
+- ✅ Verified against the reference implementation, both directions (see `docs/AGE.md`)
+
 ## Shipped in v2.0
 
 - ✅ **Hidden volume** — several PIN slots in one file, each opening different content
@@ -53,12 +59,8 @@ Legend: ✅ shipped · 🔜 planned · 💭 under consideration
 ## Planned
 
 ### 🔜 Cryptography
-- **`age` interoperability** — read and write [age](https://age-encryption.org) v1 files (X25519 and
-  scrypt recipients). *Deferred from v2.0 deliberately:* it is a separate file format with its own
-  chunked-ChaCha20-Poly1305 STREAM construction, and `cryptography`'s ChaCha20-Poly1305 has no Web
-  Crypto equivalent — so it would be CLI-only, and it needs validating against the official age test
-  vectors before it can be trusted. Shipping unverified crypto interop is worse than not shipping it.
-  This stays the top cryptography item.
+- **The rest of age** — `scrypt` passphrase recipients, ASCII armor, and the ML-KEM / P-256 tagged
+  recipient types. The v1 header, X25519 recipients and the STREAM payload are done.
 - **Hidden slots in recipient mode** — hidden content without a PIN.
 
 ### 🔜 Usability

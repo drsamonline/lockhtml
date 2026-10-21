@@ -7,6 +7,7 @@ import base64
 import sys
 import tempfile
 import webbrowser
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
@@ -273,6 +274,25 @@ def cmd_unlock(args: argparse.Namespace) -> int:
 
 
 def cmd_keygen(args: argparse.Namespace) -> int:
+    if args.type == "age":
+        from . import age as agemod
+        dest = Path(args.output or "age-key.txt")
+        if dest.exists() and not args.force:
+            print(f"error: {dest} already exists (use --force to overwrite)", file=sys.stderr)
+            return 2
+        identity = agemod.generate_identity()
+        recipient = agemod.encode_recipient(identity)
+        created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        dest.write_text(
+            f"# created: {created}\n"
+            f"# public key: {recipient}\n"
+            f"{agemod.encode_identity(identity)}\n",
+            encoding="utf-8")
+        print(f"wrote age identity -> {dest}   (keep this secret)")
+        print(f"public key: {recipient}")
+        print("Senders: lockhtml age-encrypt FILE -r " + recipient)
+        return 0
+
     if args.type == "x25519":
         dest = Path(args.output or "lockhtml-recipient-key.pem")
         if dest.exists() and not args.force:
@@ -309,6 +329,72 @@ def _gui_source() -> Path:
     tmp = Path(tempfile.gettempdir()) / "lockhtml-gui.html"
     tmp.write_text(data, encoding="utf-8")
     return tmp
+
+
+def _collect_recipients(args: argparse.Namespace) -> list:
+    from . import age as agemod
+    recipients = [agemod.parse_recipient(r) for r in (args.recipient or [])]
+    for path in (args.recipients_file or []):
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                recipients.append(agemod.parse_recipient(line))
+    return recipients
+
+
+def cmd_age_encrypt(args: argparse.Namespace) -> int:
+    from . import age as agemod
+    src = Path(args.input)
+    if not src.is_file():
+        print(f"error: no such file: {src}", file=sys.stderr)
+        return 2
+    try:
+        recipients = _collect_recipients(args)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if not recipients:
+        print("error: give at least one -r <age recipient> (or -R <file>)", file=sys.stderr)
+        return 2
+    dest = Path(args.output) if args.output else Path(str(src) + ".age")
+    dest.write_bytes(agemod.encrypt(src.read_bytes(), recipients))
+    print(f"age-encrypted {src} -> {dest}  [{len(recipients)} recipient(s)]")
+    return 0
+
+
+def cmd_age_decrypt(args: argparse.Namespace) -> int:
+    from . import age as agemod
+    src = Path(args.input)
+    if not src.is_file():
+        print(f"error: no such file: {src}", file=sys.stderr)
+        return 2
+    identities = []
+    for path in (args.identity or []):
+        try:
+            identities.extend(agemod.read_identity_file(path))
+        except Exception as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+    for text in (args.identity_string or []):
+        try:
+            identities.append(agemod.parse_identity(text))
+        except Exception as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+    if not identities:
+        print("error: give at least one -i <key file> (or -I <identity>)", file=sys.stderr)
+        return 2
+    try:
+        plaintext = agemod.decrypt(src.read_bytes(), identities)
+    except Exception:
+        print("error: no identity matched, or the age file is damaged", file=sys.stderr)
+        return 1
+    if args.output:
+        Path(args.output).write_bytes(plaintext)
+        print(f"age-decrypted {src} -> {args.output}")
+    else:
+        sys.stdout.buffer.write(plaintext)
+    return 0
 
 
 def cmd_calibrate(args: argparse.Namespace) -> int:
@@ -387,11 +473,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_unlock.set_defaults(func=cmd_unlock)
 
     p_keygen = sub.add_parser("keygen", help="generate an Ed25519 signing key or an X25519 recipient key")
-    p_keygen.add_argument("--type", choices=["ed25519", "x25519"], default="ed25519",
-                          help="ed25519 for signing (default), x25519 for recipient encryption")
+    p_keygen.add_argument("--type", choices=["ed25519", "x25519", "age"], default="ed25519",
+                          help="ed25519 for signing (default), x25519 for recipient encryption, "
+                               "age for an age-format identity")
     p_keygen.add_argument("-o", "--output", help="output PEM path")
     p_keygen.add_argument("--force", action="store_true", help="overwrite an existing key")
     p_keygen.set_defaults(func=cmd_keygen)
+
+    p_ae = sub.add_parser("age-encrypt", help="encrypt a file in the age format (X25519 recipients)")
+    p_ae.add_argument("input", help="file to encrypt")
+    p_ae.add_argument("-r", "--recipient", action="append", default=None, metavar="AGE1...",
+                      help="an age recipient (repeatable)")
+    p_ae.add_argument("-R", "--recipients-file", action="append", default=None, metavar="FILE",
+                      help="a file of age recipients, one per line (repeatable)")
+    p_ae.add_argument("-o", "--output", help="output path (default: INPUT.age)")
+    p_ae.set_defaults(func=cmd_age_encrypt)
+
+    p_ad = sub.add_parser("age-decrypt", help="decrypt an age-format file")
+    p_ad.add_argument("input", help="age file to decrypt")
+    p_ad.add_argument("-i", "--identity", action="append", default=None, metavar="FILE",
+                      help="an age key file (repeatable)")
+    p_ad.add_argument("-I", "--identity-string", action="append", default=None, metavar="AGE-SECRET-KEY-1...",
+                      help="an age identity string (repeatable)")
+    p_ad.add_argument("-o", "--output", help="write plaintext here (default: stdout)")
+    p_ad.set_defaults(func=cmd_age_decrypt)
 
     p_cal = sub.add_parser("calibrate", help="measure this machine and suggest Argon2id parameters")
     p_cal.add_argument("--seconds", type=float, default=DEFAULT_KDF_SECONDS,

@@ -27,7 +27,6 @@ AES-256-GCM · PIN-protected · one-time view · cross-platform · offline · no
 AES-256-GCM · Argon2id · unlocks in the browser · runs everywhere · nothing leaves your device.
 
 [![CI](https://github.com/drsamonline/lockhtml/actions/workflows/ci.yml/badge.svg)](https://github.com/drsamonline/lockhtml/actions/workflows/ci.yml)
-[![Deploy GUI](https://github.com/drsamonline/lockhtml/actions/workflows/pages.yml/badge.svg)](https://github.com/drsamonline/lockhtml/actions/workflows/pages.yml)
 [![Live GUI](https://img.shields.io/badge/live%20GUI-open%20in%20browser-5a86ff?logo=html5&logoColor=white)](https://drsamonline.github.io/lockhtml/play/)
 [![Release](https://img.shields.io/github/v/release/drsamonline/lockhtml?color=33d17a&label=release)](https://github.com/drsamonline/lockhtml/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-33d17a.svg)](LICENSE)

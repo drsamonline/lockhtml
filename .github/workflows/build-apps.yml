@@ -1,6 +1,6 @@
 name: Build portable EXE + Android APK
 
-# Drop this file into a consuming app repo
+# Drop this file into a consuming app repo as
 # .github/workflows/build-apps.yml (pilot: boericke-repertory).
 #
 # APP_NAME  -> asset names: <APP_NAME>-portable.exe and <APP_NAME>.apk
@@ -138,7 +138,7 @@ jobs:
     if: always()
     steps:
       - name: Download EXE artifact
-        uses: actions/downloadartifact@v4
+        uses: actions/download-artifact@v4
         with:
           name: portable-exe
           path: dist

@@ -15,6 +15,8 @@ AES-256-GCM · PIN-protected · one-time view · cross-platform · offline · no
 
 ### 🌐 [Landing page](https://drsamonline.github.io/lockhtml/) &nbsp;•&nbsp; 🚀 [Live demo — open the app](https://drsamonline.github.io/lockhtml/play/)
 
+**Download:** [Windows (.exe)](https://github.com/drsamonline/lockhtml/releases/latest/download/lockhtml-portable.exe) &nbsp;·&nbsp; [Android (.apk)](https://github.com/drsamonline/lockhtml/releases/latest/download/lockhtml.apk)
+
 </div>
 
 ---

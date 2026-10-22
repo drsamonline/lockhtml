@@ -13,7 +13,7 @@ AES-256-GCM · PIN-protected · one-time view · cross-platform · offline · no
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-22d3ee?style=for-the-badge&labelColor=0a1024)](#)
 [![CLI + GUI](https://img.shields.io/badge/interface-CLI%20%2B%20GUI-22d3ee?style=for-the-badge&labelColor=0a1024)](#)
 
-### 🌐 [Landing page](https://drsamonline.github.io/lockhtml/) &nbsp;•&nbsp; 🚀 [Live demo — open the app](https://drsamonline.github.io/lockhtml/play/)
+### 🌐 [Landing page](https://drsamonline.github.io/lockhtml/) &nbsp;•&nbsp; 🚀 [Live demo — open the app](https://drsamonline.github.io/lockhtml/play/) &nbsp;•&nbsp; 🧭 [All projects](https://drsamonline.github.io/)
 
 **Download:** [Windows (.exe)](https://github.com/drsamonline/lockhtml/releases/latest/download/lockhtml-portable.exe) &nbsp;·&nbsp; [Android (.apk)](https://github.com/drsamonline/lockhtml/releases/latest/download/lockhtml.apk)
 

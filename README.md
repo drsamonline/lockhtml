@@ -21,29 +21,6 @@ AES-256-GCM · PIN-protected · one-time view · cross-platform · offline · no
 
 ---
 
-<div align="center">
-
-
-**Turn any file into a PIN-protected document — optionally viewable only once.**
-
-AES-256-GCM · Argon2id · unlocks in the browser · runs everywhere · nothing leaves your device.
-
-[![CI](https://github.com/drsamonline/lockhtml/actions/workflows/ci.yml/badge.svg)](https://github.com/drsamonline/lockhtml/actions/workflows/ci.yml)
-[![Live GUI](https://img.shields.io/badge/live%20GUI-open%20in%20browser-5a86ff?logo=html5&logoColor=white)](https://drsamonline.github.io/lockhtml/play/)
-[![Release](https://img.shields.io/github/v/release/drsamonline/lockhtml?color=33d17a&label=release)](https://github.com/drsamonline/lockhtml/releases)
-[![License: MIT](https://img.shields.io/badge/license-MIT-33d17a.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.9%2B-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-8957e5)](#)
-[![KDF](https://img.shields.io/badge/KDF-Argon2id%20%7C%20PBKDF2-ff6b6b)](#how-it-works)
-[![PWA](https://img.shields.io/badge/PWA-offline%20ready-5a86ff)](#the-gui)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
-[![GitHub stars](https://img.shields.io/github/stars/drsamonline/lockhtml?style=social)](https://github.com/drsamonline/lockhtml/stargazers)
-[![Last commit](https://img.shields.io/github/last-commit/drsamonline/lockhtml)](https://github.com/drsamonline/lockhtml/commits)
-
-</div>
-
----
-
 **LockHTML** takes an ordinary file — an HTML page, a PDF, a photo, anything — encrypts it with a
 key derived from a PIN, and gives you back a single self-contained `.html` file. Anyone who opens it
 is asked for the PIN; enter it and the document appears. Choose **one-time view** (or a view limit,

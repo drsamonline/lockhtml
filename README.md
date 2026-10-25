@@ -2,6 +2,12 @@
 
 # 🔒 LockHTML
 
+<!-- shot:start -->
+
+![Screenshot](docs/shot.png)
+
+<!-- shot:end -->
+
 **Turn any file into a PIN-protected document — optionally viewable only once.**
 
 AES-256-GCM · PIN-protected · one-time view · cross-platform · offline · nothing leaves your device.

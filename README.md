@@ -331,6 +331,6 @@ make build           # regenerate + minify the GUI and viewers
 
 ## 📜 License
 
-[MIT](LICENSE) © Dr Sohil Momin
+[PolyForm Noncommercial](LICENSE) © Dr Sohil Momin
 
 <div align="center"><sub>Built for the web. Runs on any OS. Nothing leaves your device.</sub></div>

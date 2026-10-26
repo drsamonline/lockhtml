@@ -67,4 +67,4 @@ before committing.
 4. Open a pull request describing what changed and why.
 
 By contributing you agree that your contributions are licensed under the
-[MIT License](LICENSE).
+[PolyForm Noncommercial License 1.0.0](LICENSE).

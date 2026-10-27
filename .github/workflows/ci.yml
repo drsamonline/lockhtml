@@ -66,6 +66,7 @@ jobs:
         run: node tools/check_gui_compat.mjs /tmp/gui_locked.html
       - name: Confirm the CLI can open a GUI-locked file
         run: |
+          set -o pipefail
           lockhtml unlock /tmp/gui_locked.html --pin 4821 | grep -q "ORION-7742"
           echo "cross-implementation compatibility: OK"
 

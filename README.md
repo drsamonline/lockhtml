@@ -13,7 +13,7 @@
 AES-256-GCM · PIN-protected · one-time view · cross-platform · offline · nothing leaves your device.
 
 [![Stars](https://img.shields.io/github/stars/drsamonline/lockhtml?style=for-the-badge&logo=github&color=22d3ee&labelColor=0a1024)](https://github.com/drsamonline/lockhtml/stargazers)
-[![License: MIT](https://img.shields.io/badge/license-MIT-22d3ee?style=for-the-badge&labelColor=0a1024)](LICENSE)
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-2e7d32?style=for-the-badge&labelColor=0a1024)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/drsamonline/lockhtml?style=for-the-badge&color=22d3ee&labelColor=0a1024)](https://github.com/drsamonline/lockhtml/releases)
 [![PyPI](https://img.shields.io/badge/PyPI-not%20published-lightgrey?style=for-the-badge&labelColor=0a1024)](https://github.com/drsamonline/lockhtml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-22d3ee?style=for-the-badge&labelColor=0a1024)](#)

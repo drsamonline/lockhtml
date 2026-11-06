@@ -1,0 +1,19 @@
+{
+  "_note": "Pages are set by hand, from the 2026-11-05 audit. A sweep must not restore anything listed in `deleted`, must not create a landing page where `landing` already points, and must not overwrite `landing` or `app`.",
+  "manual": true,
+  "landing": "docs/index.html",
+  "app": "docs/play/index.html",
+  "deleted": [
+    {
+      "path": "examples/sample.html",
+      "pid": "p125",
+      "commit": "ca9b8ac8"
+    },
+    {
+      "path": "examples/sample.locked.html",
+      "pid": "p126",
+      "commit": "10fe031e"
+    }
+  ],
+  "updated": "2026-11-06"
+}

@@ -407,7 +407,29 @@ html.js .reveal.in{opacity:1;transform:none}
   .theme-btn:hover{opacity:1}
   .theme-btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
   .theme-btn-top{float:right;margin:2px 0 0 10px}</style>
-<style id="__overflow_fix__"> /* horizontal-overflow fixes */ .start-grid>*,.cards>*,.steps>*,.demo-grid>*,.hero-grid>*{min-width:0} </style>
+<style id="__overflow_fix__"> /* horizontal-overflow fixes */ .start-grid>*,.cards>*,.steps>*,.demo-grid>*,.hero-grid>*{min-width:0} 
+/* ---- the two token sets, bridged -----------------------------------------
+   :root defines --panel/--panel-2/--txt/--muted/--accent (dark values); the theme
+   blocks define --card/--ink/--mut/--acc. So in the light theme --panel-2 was
+   still #1b2130 while --ink was #10151e — dark on dark — and --muted never
+   flipped at all. Mapping the first set onto the second is one line per mode and
+   nothing else moves. */
+[data-theme="light"]{--panel:var(--card);--panel-2:var(--card);--txt:var(--ink);
+  --muted:var(--mut);--accent:var(--acc);--accent-2:var(--acc)}
+[data-theme="dark"]{--panel:var(--card);--panel-2:var(--card);--txt:var(--ink);
+  --muted:var(--mut);--accent:var(--acc);--accent-2:var(--acc)}
+
+/* the active tab was white-on-white once --panel became the card colour: it takes
+   the ink as its surface and the card as its label, which pairs in both modes */
+.tab.active{background:var(--ink)!important;color:var(--card)!important}
+pre{background:#1b2028!important;color:#c9d6e5!important}
+a.btn.btn-primary{color:#ffffff!important}          /* 3.54 -> 5.0 on #0e7490 */
+
+/* One surface, one label. The accent flips (#0891b2 light, #67e8f9 dark) and
+   neither takes white (3.68:1 / 1.45:1) nor a dark ink (4.11:1) cleanly. #0e7490
+   is the same hue, one step down, and white reads 5.0:1 on it in both modes. */
+button:not(.ghost):not(.tab),a.btn.btn-primary{background:#0e7490!important;color:#ffffff!important}
+</style>
 <script>document.documentElement.className += ' js';</script>
 <script>
 /* THEME BEFORE FIRST PAINT: a page that paints one theme and flips to the other is a
